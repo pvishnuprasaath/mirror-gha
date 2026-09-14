@@ -1,30 +1,36 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"mirror-gha/third_party/ghaexpr"
 )
 
 // EvalExpression evaluates a GitHub Actions expression string (without the
-// ${{ }} wrapper) against ctx. This Phase-1 subset supports: string/bool/
-// number literals, dotted context lookups (env.X, github.X, runner.X,
-// steps.<id>.outcome, steps.<id>.outputs.<name>), the operators
-// == != && || !, and the status functions success()/failure()/always()/
-// cancelled(). Parenthesized grouping is not yet supported — a documented
-// gap, not a silent one; expressions needing it return a parse error.
+// ${{ }} wrapper) against ctx. Parsing is delegated to ghaexpr (a surgical
+// extraction of rhysd/actionlint's expression lexer/parser — see
+// third_party/ghaexpr/NOTICE.md), so the full GitHub Actions expression
+// grammar is supported: literals (including null), dotted/indexed context
+// lookups, parenthesized grouping, ==/!=/</<=/>/>=, short-circuiting &&/||
+// (returning the operand, not a coerced bool, matching real GitHub Actions
+// semantics), unary !, and function calls. This package supplies the
+// evaluation semantics — what a variable/property/function resolves to —
+// on top of that parsed tree.
+//
+// Supported functions: success()/failure()/always()/cancelled(), contains(),
+// startsWith(), endsWith(), format(), join(), toJSON(), fromJSON().
+// hashFiles() is not implemented — it depends on a real checked-out
+// workspace, which doesn't exist yet — and returns a clear error rather
+// than a wrong result.
 func EvalExpression(expr string, ctx *Context) (interface{}, error) {
-	p := &exprParser{input: strings.TrimSpace(expr), ctx: ctx}
-	val, err := p.parseOr()
+	node, err := parseExpr(expr)
 	if err != nil {
 		return nil, err
 	}
-	p.skipSpace()
-	if p.pos != len(p.input) {
-		return nil, fmt.Errorf("unexpected trailing input at %d: %q", p.pos, p.input[p.pos:])
-	}
-	return val, nil
+	return evalNode(node, ctx)
 }
 
 // EvalBool evaluates an `if:` condition. GitHub Actions treats a bare
@@ -37,20 +43,20 @@ func EvalBool(expr string, ctx *Context) (bool, error) {
 	return truthy(val), nil
 }
 
-var exprPattern = regexp.MustCompile(`\$\{\{(.*?)\}\}`)
+var wrappedExprPattern = regexp.MustCompile(`\$\{\{(.*?)\}\}`)
 
 // SubstituteExpressions replaces every ${{ ... }} occurrence in s with its
 // evaluated, stringified value.
 func SubstituteExpressions(s string, ctx *Context) (string, error) {
 	var evalErr error
-	result := exprPattern.ReplaceAllStringFunc(s, func(match string) string {
-		inner := exprPattern.FindStringSubmatch(match)[1]
+	result := wrappedExprPattern.ReplaceAllStringFunc(s, func(match string) string {
+		inner := wrappedExprPattern.FindStringSubmatch(match)[1]
 		val, err := EvalExpression(strings.TrimSpace(inner), ctx)
 		if err != nil {
 			evalErr = err
 			return match
 		}
-		return fmt.Sprintf("%v", val)
+		return toStr(val)
 	})
 	if evalErr != nil {
 		return "", evalErr
@@ -64,6 +70,19 @@ func unwrap(expr string) string {
 		return strings.TrimSpace(expr[3 : len(expr)-2])
 	}
 	return expr
+}
+
+// parseExpr parses expr (bare, no ${{ }} wrapper) into ghaexpr's AST. The
+// lexer requires a trailing "}}" as its end-of-input marker — that's how
+// it's designed to lex the interior of a ${{ }} block — so it's added back
+// here rather than exposed as part of this package's public contract.
+func parseExpr(expr string) (ghaexpr.ExprNode, error) {
+	src := strings.TrimSpace(expr) + "}}"
+	node, err := ghaexpr.NewExprParser().Parse(ghaexpr.NewExprLexer(src))
+	if err != nil {
+		return nil, fmt.Errorf("parse expression %q: %w", expr, err)
+	}
+	return node, nil
 }
 
 func truthy(v interface{}) bool {
@@ -81,178 +100,240 @@ func truthy(v interface{}) bool {
 	}
 }
 
-type exprParser struct {
-	input string
-	pos   int
-	ctx   *Context
-}
-
-func (p *exprParser) skipSpace() {
-	for p.pos < len(p.input) && p.input[p.pos] == ' ' {
-		p.pos++
+func toStr(v interface{}) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", t)
 	}
 }
 
-func (p *exprParser) peekOp(op string) bool {
-	p.skipSpace()
-	return strings.HasPrefix(p.input[p.pos:], op)
-}
-
-func (p *exprParser) consumeOp(op string) {
-	p.skipSpace()
-	p.pos += len(op)
-}
-
-func (p *exprParser) parseOr() (interface{}, error) {
-	left, err := p.parseAnd()
-	if err != nil {
-		return nil, err
+func toNumber(v interface{}) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case bool:
+		if t {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
 	}
-	for p.peekOp("||") {
-		p.consumeOp("||")
-		right, err := p.parseAnd()
+}
+
+func evalNode(node ghaexpr.ExprNode, ctx *Context) (interface{}, error) {
+	switch n := node.(type) {
+	case *ghaexpr.NullNode:
+		return nil, nil
+	case *ghaexpr.BoolNode:
+		return n.Value, nil
+	case *ghaexpr.IntNode:
+		return float64(n.Value), nil
+	case *ghaexpr.FloatNode:
+		return n.Value, nil
+	case *ghaexpr.StringNode:
+		return n.Value, nil
+	case *ghaexpr.VariableNode, *ghaexpr.ObjectDerefNode, *ghaexpr.IndexAccessNode:
+		path, err := pathFromNode(node)
 		if err != nil {
 			return nil, err
 		}
-		left = truthy(left) || truthy(right)
-	}
-	return left, nil
-}
-
-func (p *exprParser) parseAnd() (interface{}, error) {
-	left, err := p.parseEquality()
-	if err != nil {
-		return nil, err
-	}
-	for p.peekOp("&&") {
-		p.consumeOp("&&")
-		right, err := p.parseEquality()
-		if err != nil {
-			return nil, err
-		}
-		left = truthy(left) && truthy(right)
-	}
-	return left, nil
-}
-
-func (p *exprParser) parseEquality() (interface{}, error) {
-	left, err := p.parseUnary()
-	if err != nil {
-		return nil, err
-	}
-	for {
-		if p.peekOp("==") {
-			p.consumeOp("==")
-			right, err := p.parseUnary()
-			if err != nil {
-				return nil, err
-			}
-			left = fmt.Sprintf("%v", left) == fmt.Sprintf("%v", right)
-			continue
-		}
-		if p.peekOp("!=") {
-			p.consumeOp("!=")
-			right, err := p.parseUnary()
-			if err != nil {
-				return nil, err
-			}
-			left = fmt.Sprintf("%v", left) != fmt.Sprintf("%v", right)
-			continue
-		}
-		break
-	}
-	return left, nil
-}
-
-func (p *exprParser) parseUnary() (interface{}, error) {
-	p.skipSpace()
-	if p.pos < len(p.input) && p.input[p.pos] == '!' {
-		p.pos++
-		val, err := p.parseUnary()
+		return ctx.resolvePath(path)
+	case *ghaexpr.ArrayDerefNode:
+		return nil, fmt.Errorf("array dereference ('.*') is not supported yet")
+	case *ghaexpr.NotOpNode:
+		val, err := evalNode(n.Operand, ctx)
 		if err != nil {
 			return nil, err
 		}
 		return !truthy(val), nil
-	}
-	return p.parsePrimary()
-}
-
-func (p *exprParser) parsePrimary() (interface{}, error) {
-	p.skipSpace()
-	if p.pos >= len(p.input) {
-		return nil, fmt.Errorf("unexpected end of expression")
-	}
-
-	c := p.input[p.pos]
-
-	if c == '\'' {
-		end := strings.IndexByte(p.input[p.pos+1:], '\'')
-		if end == -1 {
-			return nil, fmt.Errorf("unterminated string literal")
-		}
-		val := p.input[p.pos+1 : p.pos+1+end]
-		p.pos = p.pos + 1 + end + 1
-		return val, nil
-	}
-
-	if strings.HasPrefix(p.input[p.pos:], "true") {
-		p.pos += 4
-		return true, nil
-	}
-	if strings.HasPrefix(p.input[p.pos:], "false") {
-		p.pos += 5
-		return false, nil
-	}
-
-	if c >= '0' && c <= '9' || c == '-' {
-		start := p.pos
-		p.pos++
-		for p.pos < len(p.input) && (p.input[p.pos] >= '0' && p.input[p.pos] <= '9' || p.input[p.pos] == '.') {
-			p.pos++
-		}
-		n, err := strconv.ParseFloat(p.input[start:p.pos], 64)
+	case *ghaexpr.CompareOpNode:
+		left, err := evalNode(n.Left, ctx)
 		if err != nil {
-			return nil, fmt.Errorf("invalid number literal %q: %w", p.input[start:p.pos], err)
+			return nil, err
 		}
-		return n, nil
-	}
-
-	if isIdentStart(c) {
-		start := p.pos
-		for p.pos < len(p.input) && isIdentPart(p.input[p.pos]) {
-			p.pos++
+		right, err := evalNode(n.Right, ctx)
+		if err != nil {
+			return nil, err
 		}
-		ident := p.input[start:p.pos]
-
-		if p.pos < len(p.input) && p.input[p.pos] == '(' {
-			p.pos++
-			p.skipSpace()
-			if p.pos >= len(p.input) || p.input[p.pos] != ')' {
-				return nil, fmt.Errorf("status functions take no arguments: %s(...)", ident)
+		return compareValues(n.Kind, left, right)
+	case *ghaexpr.LogicalOpNode:
+		left, err := evalNode(n.Left, ctx)
+		if err != nil {
+			return nil, err
+		}
+		switch n.Kind {
+		case ghaexpr.LogicalOpNodeKindAnd:
+			if !truthy(left) {
+				return left, nil
 			}
-			p.pos++
-			return p.ctx.callStatusFunc(ident)
-		}
-
-		path := []string{ident}
-		for p.pos < len(p.input) && p.input[p.pos] == '.' {
-			p.pos++
-			start := p.pos
-			for p.pos < len(p.input) && isIdentPart(p.input[p.pos]) {
-				p.pos++
+			return evalNode(n.Right, ctx)
+		case ghaexpr.LogicalOpNodeKindOr:
+			if truthy(left) {
+				return left, nil
 			}
-			path = append(path, p.input[start:p.pos])
+			return evalNode(n.Right, ctx)
+		default:
+			return nil, fmt.Errorf("unknown logical operator")
 		}
-		return p.ctx.resolvePath(path)
+	case *ghaexpr.FuncCallNode:
+		args := make([]interface{}, len(n.Args))
+		for i, a := range n.Args {
+			val, err := evalNode(a, ctx)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return callFunction(n.Callee, args, ctx)
+	default:
+		return nil, fmt.Errorf("unsupported expression node %T", node)
 	}
-
-	return nil, fmt.Errorf("unexpected character %q at position %d", c, p.pos)
 }
 
-func isIdentStart(c byte) bool {
-	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+// pathFromNode unwraps a chain of ObjectDerefNode/IndexAccessNode (string
+// literal index only) down to a base VariableNode, producing the same
+// []string path Context.resolvePath expects (e.g. `steps.emit.outputs.x`
+// -> ["steps", "emit", "outputs", "x"]). Context names are matched
+// case-insensitively per the GitHub Actions expression language; property
+// names are not, since env/output keys are.
+func pathFromNode(node ghaexpr.ExprNode) ([]string, error) {
+	switch n := node.(type) {
+	case *ghaexpr.VariableNode:
+		return []string{strings.ToLower(n.Name)}, nil
+	case *ghaexpr.ObjectDerefNode:
+		base, err := pathFromNode(n.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		return append(base, n.Property), nil
+	case *ghaexpr.IndexAccessNode:
+		base, err := pathFromNode(n.Operand)
+		if err != nil {
+			return nil, err
+		}
+		idx, ok := n.Index.(*ghaexpr.StringNode)
+		if !ok {
+			return nil, fmt.Errorf("only string-literal index access (e.g. foo['bar']) is supported")
+		}
+		return append(base, idx.Value), nil
+	default:
+		return nil, fmt.Errorf("unsupported context path expression")
+	}
 }
 
-func isIdentPart(c byte) bool {
-	return isIdentStart(c) || (c >= '0' && c <= '9') || c == '-'
+func compareValues(kind ghaexpr.CompareOpNodeKind, left, right interface{}) (interface{}, error) {
+	if kind.IsEqualityOp() {
+		eq := toStr(left) == toStr(right)
+		if kind == ghaexpr.CompareOpNodeKindNotEq {
+			return !eq, nil
+		}
+		return eq, nil
+	}
+
+	lf, lok := toNumber(left)
+	rf, rok := toNumber(right)
+	if !lok || !rok {
+		return nil, fmt.Errorf("operator %s requires numeric operands", kind)
+	}
+	switch kind {
+	case ghaexpr.CompareOpNodeKindLess:
+		return lf < rf, nil
+	case ghaexpr.CompareOpNodeKindLessEq:
+		return lf <= rf, nil
+	case ghaexpr.CompareOpNodeKindGreater:
+		return lf > rf, nil
+	case ghaexpr.CompareOpNodeKindGreaterEq:
+		return lf >= rf, nil
+	default:
+		return nil, fmt.Errorf("unknown compare operator")
+	}
+}
+
+func callFunction(name string, args []interface{}, ctx *Context) (interface{}, error) {
+	switch strings.ToLower(name) {
+	case "success", "failure", "always", "cancelled":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s() takes no arguments", name)
+		}
+		return ctx.callStatusFunc(strings.ToLower(name))
+	case "contains":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("contains() takes 2 arguments")
+		}
+		return strings.Contains(toStr(args[0]), toStr(args[1])), nil
+	case "startswith":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("startsWith() takes 2 arguments")
+		}
+		return strings.HasPrefix(toStr(args[0]), toStr(args[1])), nil
+	case "endswith":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("endsWith() takes 2 arguments")
+		}
+		return strings.HasSuffix(toStr(args[0]), toStr(args[1])), nil
+	case "format":
+		if len(args) == 0 {
+			return nil, fmt.Errorf("format() takes at least 1 argument")
+		}
+		return formatGHA(toStr(args[0]), args[1:]), nil
+	case "join":
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("join() takes 1 or 2 arguments")
+		}
+		sep := ", "
+		if len(args) == 2 {
+			sep = toStr(args[1])
+		}
+		return joinValue(args[0], sep), nil
+	case "tojson":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("toJSON() takes 1 argument")
+		}
+		b, err := json.Marshal(args[0])
+		if err != nil {
+			return nil, fmt.Errorf("toJSON: %w", err)
+		}
+		return string(b), nil
+	case "fromjson":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("fromJSON() takes 1 argument")
+		}
+		var v interface{}
+		if err := json.Unmarshal([]byte(toStr(args[0])), &v); err != nil {
+			return nil, fmt.Errorf("fromJSON: %w", err)
+		}
+		return v, nil
+	case "hashfiles":
+		return nil, fmt.Errorf("hashFiles() is not supported yet (requires a real checked-out workspace)")
+	default:
+		return nil, fmt.Errorf("unsupported function %q", name)
+	}
+}
+
+func formatGHA(tmpl string, args []interface{}) string {
+	result := tmpl
+	for i, a := range args {
+		result = strings.ReplaceAll(result, fmt.Sprintf("{%d}", i), toStr(a))
+	}
+	return result
+}
+
+func joinValue(v interface{}, sep string) string {
+	items, ok := v.([]interface{})
+	if !ok {
+		return toStr(v)
+	}
+	parts := make([]string, len(items))
+	for i, item := range items {
+		parts[i] = toStr(item)
+	}
+	return strings.Join(parts, sep)
 }

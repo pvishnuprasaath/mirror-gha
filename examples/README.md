@@ -14,6 +14,7 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`continue-on-error.yml`](workflows/continue-on-error.yml) | `continue-on-error: true` — a failing step that doesn't stop the job |
 | [`output-passing.yml`](workflows/output-passing.yml) | A step writing to `$GITHUB_OUTPUT`, read back by a later step via `steps.<id>.outputs.<name>` |
 | [`shared-state.yml`](workflows/shared-state.yml) | All steps in a job share one environment — a file written by step 1 is readable by step 2, matching real GitHub Actions |
+| [`expression-functions.yml`](workflows/expression-functions.yml) | Built-in expression functions (`startsWith`, `format`) and real `\|\|` short-circuit default-value semantics |
 
 ## What's not shown here (yet)
 

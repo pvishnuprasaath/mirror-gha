@@ -1,0 +1,24 @@
+# Demonstrates the GitHub Actions expression built-ins now available:
+# contains(), startsWith(), format(), numeric comparisons, and the real
+# short-circuit semantics of && / || (they return the operand, not a
+# coerced boolean — useful for default-value patterns).
+#
+# Try it:
+#   mirror run examples/workflows/expression-functions.yml
+name: expression functions
+on: push
+env:
+  BRANCH: refs/heads/feature/cool-thing
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check branch prefix
+        if: ${{ startsWith(env.BRANCH, 'refs/heads/feature/') }}
+        run: echo "This is a feature branch"
+      - name: format a message
+        run: echo "${{ format('Building {0} from {1}', 'mirror-gha', env.BRANCH) }}"
+      - name: default value via ||
+        env:
+          NAME: ""
+        run: echo "Hello, ${{ env.NAME || 'anonymous' }}"

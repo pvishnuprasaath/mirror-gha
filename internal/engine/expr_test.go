@@ -54,10 +54,98 @@ func TestEvalExpression_Negation(t *testing.T) {
 	ctx := newTestContext()
 	val, err := EvalExpression("!(env.JOB == 'nope')", ctx)
 	if err != nil {
-		t.Skipf("grouping parens not supported in Phase 1 subset: %v", err)
+		t.Fatalf("EvalExpression() error = %v", err)
 	}
 	if val != true {
 		t.Errorf("val = %v, want true", val)
+	}
+}
+
+func TestEvalExpression_Comparisons(t *testing.T) {
+	ctx := newTestContext()
+	cases := []struct {
+		expr string
+		want interface{}
+	}{
+		{"1 < 2", true},
+		{"2 <= 2", true},
+		{"3 > 2", true},
+		{"2 >= 3", false},
+		{"null == null", true},
+	}
+	for _, c := range cases {
+		val, err := EvalExpression(c.expr, ctx)
+		if err != nil {
+			t.Fatalf("EvalExpression(%q) error = %v", c.expr, err)
+		}
+		if val != c.want {
+			t.Errorf("EvalExpression(%q) = %v, want %v", c.expr, val, c.want)
+		}
+	}
+}
+
+func TestEvalExpression_LogicalOperatorsReturnOperand(t *testing.T) {
+	ctx := newTestContext()
+
+	val, err := EvalExpression("'' || 'default'", ctx)
+	if err != nil {
+		t.Fatalf("EvalExpression() error = %v", err)
+	}
+	if val != "default" {
+		t.Errorf("val = %v, want %q (|| should return the operand, not a coerced bool)", val, "default")
+	}
+
+	val, err = EvalExpression("false && 'unreached'", ctx)
+	if err != nil {
+		t.Fatalf("EvalExpression() error = %v", err)
+	}
+	if val != false {
+		t.Errorf("val = %v, want false (&& should short-circuit and return the falsy left operand)", val)
+	}
+}
+
+func TestEvalExpression_CaseInsensitivePropertyAccess(t *testing.T) {
+	ctx := newTestContext()
+	// env.JOB was set via newTestContext with an uppercase key; GHA's
+	// expression language matches property names case-insensitively.
+	val, err := EvalExpression("env.job", ctx)
+	if err != nil {
+		t.Fatalf("EvalExpression() error = %v", err)
+	}
+	if val != "j" {
+		t.Errorf("val = %v, want %q", val, "j")
+	}
+}
+
+func TestEvalExpression_BuiltinFunctions(t *testing.T) {
+	ctx := newTestContext()
+	cases := []struct {
+		expr string
+		want interface{}
+	}{
+		{"contains('hello world', 'world')", true},
+		{"startsWith('hello', 'he')", true},
+		{"endsWith('hello', 'lo')", true},
+		{"format('{0} and {1}', 'a', 'b')", "a and b"},
+		{"join(fromJSON('[\"a\",\"b\",\"c\"]'), '-')", "a-b-c"},
+		{"toJSON('hi')", `"hi"`},
+	}
+	for _, c := range cases {
+		val, err := EvalExpression(c.expr, ctx)
+		if err != nil {
+			t.Fatalf("EvalExpression(%q) error = %v", c.expr, err)
+		}
+		if val != c.want {
+			t.Errorf("EvalExpression(%q) = %v, want %v", c.expr, val, c.want)
+		}
+	}
+}
+
+func TestEvalExpression_HashFilesReturnsClearError(t *testing.T) {
+	ctx := newTestContext()
+	_, err := EvalExpression("hashFiles('**/go.sum')", ctx)
+	if err == nil {
+		t.Fatal("EvalExpression(hashFiles(...)) error = nil, want a clear unsupported error")
 	}
 }
 
