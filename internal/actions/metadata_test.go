@@ -68,6 +68,46 @@ runs:
 	}
 }
 
+func TestParseMetadata_DockerRuns(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "action.yml", `
+name: 'Docker Action'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  entrypoint: '/entrypoint.sh'
+  args:
+    - '--verbose'
+    - '--name'
+    - 'mirror-gha'
+  env:
+    GREETING_STYLE: 'formal'
+`)
+
+	meta, err := ParseMetadata(dir)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if meta.Runs.Using != "docker" || meta.Runs.Image != "Dockerfile" {
+		t.Errorf("Runs.Using/Image = %q/%q, want docker/Dockerfile", meta.Runs.Using, meta.Runs.Image)
+	}
+	if meta.Runs.Entrypoint != "/entrypoint.sh" {
+		t.Errorf("Runs.Entrypoint = %q, want /entrypoint.sh", meta.Runs.Entrypoint)
+	}
+	wantArgs := []string{"--verbose", "--name", "mirror-gha"}
+	if len(meta.Runs.Args) != len(wantArgs) {
+		t.Fatalf("Runs.Args = %v, want %v", meta.Runs.Args, wantArgs)
+	}
+	for i, a := range wantArgs {
+		if meta.Runs.Args[i] != a {
+			t.Errorf("Runs.Args[%d] = %q, want %q", i, meta.Runs.Args[i], a)
+		}
+	}
+	if meta.Runs.Env["GREETING_STYLE"] != "formal" {
+		t.Errorf(`Runs.Env["GREETING_STYLE"] = %q, want %q`, meta.Runs.Env["GREETING_STYLE"], "formal")
+	}
+}
+
 func TestParseMetadata_MissingFileIsError(t *testing.T) {
 	_, err := ParseMetadata(t.TempDir())
 	if err == nil {

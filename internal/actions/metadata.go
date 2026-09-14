@@ -17,8 +17,12 @@ type ActionInput struct {
 
 // ActionRuns is an action.yml's `runs:` block.
 type ActionRuns struct {
-	Using string `yaml:"using"`
-	Main  string `yaml:"main"`
+	Using      string            `yaml:"using"`
+	Main       string            `yaml:"main"`
+	Image      string            `yaml:"image"`
+	Entrypoint string            `yaml:"entrypoint"`
+	Args       []string          `yaml:"args"`
+	Env        map[string]string `yaml:"env"`
 }
 
 // ActionMetadata is a parsed action.yml/action.yaml.
