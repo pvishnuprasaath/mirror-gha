@@ -68,6 +68,17 @@ Unreleased until the first `v0.1.0`.
 - `mirror run <workflow.yml>` CLI command, running the full job DAG
   end-to-end.
 - Runnable examples under `examples/workflows/` for every feature above.
+- **`uses:` JS actions.** Marketplace (`owner/repo[/subpath]@ref`) and
+  local (`./path`) actions execute for real: source fetched via
+  `curl`/`tar` (not Go's `net/http` — see design spec) and cached at
+  `~/.cache/mirror-gha/actions/`, run against one pinned Node build
+  (`~/.cache/mirror-gha/node/`) copied into the job container via
+  `docker cp` (`runner.Job.CopyToContainer`), `with:` inputs mapped to
+  `INPUT_*` env vars exactly as GitHub Actions does. Docker and
+  composite actions are rejected with a clear error. Verified for real
+  against both a local fixture action and
+  `actions/hello-world-javascript-action` (GitHub's own official demo
+  action).
 
 ### Fixed
 
@@ -93,8 +104,9 @@ Unreleased until the first `v0.1.0`.
 
 ### Known limitations
 
-See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) — `uses:`
-actions, artifacts/caching, `matrix.include`/`exclude`,
-`services:`/`container:` job fields, and Windows/macOS runners are not
-implemented yet, by design and in that order (see the
+See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) — Docker
+and composite `uses:` actions, artifacts/caching,
+`matrix.include`/`exclude`, `services:`/`container:` job fields, and
+Windows/macOS runners are not implemented yet, by design and in that
+order (see the
 [design spec](docs/design/specs/2026-09-14-mirror-gha-design.md)).

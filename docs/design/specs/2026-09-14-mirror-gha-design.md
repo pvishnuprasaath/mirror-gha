@@ -124,6 +124,8 @@ issue on macOS via Docker Desktop's filesystem layer).
 
 ## JS Actions Runtime
 
+**Implemented.**
+
 **Scope:** `uses:` resolving to a JS action, either Marketplace
 (`owner/repo[/subpath]@ref`) or local (`./path`, workspace-relative).
 Docker actions (`docker://...`) and composite actions are separate,
