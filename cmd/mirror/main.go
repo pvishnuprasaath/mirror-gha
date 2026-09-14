@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"mirror-gha/internal/artifactserver"
 	"mirror-gha/internal/cacheserver"
 	"mirror-gha/internal/engine"
 	"mirror-gha/internal/runner"
@@ -239,6 +240,22 @@ func runCommand(path string, mode runMode) int {
 
 		extraEnv["ACTIONS_CACHE_URL"] = fmt.Sprintf("http://host.docker.internal:%d/", cacheSrv.Port())
 		extraEnv["ACTIONS_RUNTIME_TOKEN"] = "mirror-gha-local-token"
+
+		artifactStore, artifactRoot, err := artifactserver.NewTempStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "create artifact store: %v\n", err)
+			return 1
+		}
+		artifactSrv, err := artifactserver.Start(artifactStore)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "start artifact server: %v\n", err)
+			return 1
+		}
+		defer artifactSrv.Stop(context.Background())
+		defer fmt.Printf("artifacts stored at: %s\n", artifactRoot)
+
+		extraEnv["ACTIONS_RUNTIME_URL"] = fmt.Sprintf("http://host.docker.internal:%d/", artifactSrv.Port())
+		extraEnv["ACTIONS_RESULTS_URL"] = extraEnv["ACTIONS_RUNTIME_URL"]
 	}
 
 	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars, extraEnv)

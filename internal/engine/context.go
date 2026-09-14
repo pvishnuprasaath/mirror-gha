@@ -57,12 +57,15 @@ func NewContext(wf *Workflow, job *Job) *Context {
 
 	return &Context{
 		GitHub: map[string]interface{}{
-			"event_name": "workflow_dispatch",
-			"ref":        "refs/heads/main",
-			"sha":        "0000000000000000000000000000000000000000",
-			"repository": "local/mirror-gha",
-			"workflow":   wf.Name,
-			"actor":      "local",
+			"event_name":  "workflow_dispatch",
+			"ref":         "refs/heads/main",
+			"sha":         "0000000000000000000000000000000000000000",
+			"repository":  "local/mirror-gha",
+			"workflow":    wf.Name,
+			"actor":       "local",
+			"run_id":      "1",
+			"run_number":  "1",
+			"run_attempt": "1",
 		},
 		Env: env,
 		Runner: map[string]interface{}{

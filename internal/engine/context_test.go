@@ -19,6 +19,17 @@ func TestNewContext_MergesGlobalAndJobEnv(t *testing.T) {
 	}
 }
 
+func TestNewContext_ExposesRunIdentity(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+
+	for _, key := range []string{"run_id", "run_number", "run_attempt"} {
+		val, ok := ctx.GitHub[key].(string)
+		if !ok || val == "" {
+			t.Errorf("GitHub[%q] = %#v, want a non-empty string placeholder value", key, ctx.GitHub[key])
+		}
+	}
+}
+
 func TestResolvePath_EnvAndGithub(t *testing.T) {
 	wf := &Workflow{Name: "sample-workflow"}
 	job := &Job{}
