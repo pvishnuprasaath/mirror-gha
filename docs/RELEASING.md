@@ -54,9 +54,14 @@ installed binary was then silently killed on every run (exit 137, no
 error text) by macOS Gatekeeper's quarantine bit, since it isn't
 code-signed. Fixed with a cask post-install hook
 (`xattr -dr com.apple.quarantine`) — GoReleaser's documented workaround
-for unsigned binaries. **This fix itself hasn't been verified against a
-real release yet** — it needs the next tag to confirm the hook actually
-runs and the installed binary works without manual `xattr` intervention.
+for unsigned binaries, and **confirmed fixed for real on `v0.1.3`**: fresh
+`brew uninstall` + `brew untap` + reinstall, no quarantine attribute on
+the installed binary, `mirror version` and `mirror run` both work.
+
+Cosmetic-only: `brew install` prints a `postflight is deprecated, use
+postflight_steps instead` warning — that's GoReleaser's own cask.rb
+template (not something this project's config controls), harmless,
+doesn't affect the install or the fix.
 
 Note: this project deliberately uses `homebrew_casks`, not the legacy
 `brews` (Formula) section — `brews` was fully deprecated in GoReleaser

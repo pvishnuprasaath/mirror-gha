@@ -65,9 +65,11 @@ Unreleased until the first `v0.1.0`.
   so every invocation died silently (exit 137, no error text) —
   confirmed for real on `v0.1.2`. Added a cask post-install hook that
   strips the quarantine attribute (`xattr -dr com.apple.quarantine`),
-  GoReleaser's documented workaround for unsigned binaries. Proper
-  code signing/notarization is not set up yet (needs a paid Apple
-  Developer account) — this is a stopgap, not a substitute for it.
+  GoReleaser's documented workaround for unsigned binaries — **confirmed
+  fixed for real on `v0.1.3`** (fresh reinstall, no quarantine attribute,
+  binary runs). Proper code signing/notarization is not set up yet
+  (needs a paid Apple Developer account) — this is a stopgap, not a
+  substitute for it.
 - **Job container lifecycle.** Comparing against `nektos/act`'s source
   found a real fidelity bug: every step of a job now execs into one
   long-lived container for that job (matching how act and real GitHub
