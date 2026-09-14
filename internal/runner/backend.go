@@ -14,8 +14,19 @@ type StepResult struct {
 
 // StepSpec is everything a Job needs to execute one step, fully resolved
 // (env merged, command already expression-substituted) by the caller.
+//
+// Exactly one of Command or Args should be set. Command runs through a
+// shell (`<shell> -c <command>`), matching real GitHub Actions run: step
+// semantics. Args execs directly with no intermediate shell at all —
+// required for uses: steps: a POSIX shell (confirmed for real: dash, the
+// /bin/sh in Ubuntu images) silently drops inherited environment
+// variables whose names aren't valid shell identifiers before it execs
+// children, and GitHub Actions' own INPUT_* convention deliberately
+// allows dashes in input names. Real GitHub Actions doesn't invoke JS
+// actions through a shell either, for exactly this reason.
 type StepSpec struct {
 	Command          string
+	Args             []string
 	Shell            string
 	Env              map[string]string
 	WorkingDirectory string

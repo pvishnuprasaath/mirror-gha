@@ -28,3 +28,6 @@ Thumbs.db
 
 # Local scratch
 *.local.yml
+
+# Created at the repo root by running examples/workflows/workspace.yml
+.workspace-demo-output.txt

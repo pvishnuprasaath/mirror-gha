@@ -47,14 +47,14 @@ runs:
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := false
 
-	command, env, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
+	args, env, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
 	if err != nil {
 		t.Fatalf("prepareUsesStep() error = %v", err)
 	}
 
-	wantCommand := "/mirror-node/bin/node /mirror-actions/greet/index.js"
-	if command != wantCommand {
-		t.Errorf("command = %q, want %q", command, wantCommand)
+	wantArgs := []string{"/mirror-node/bin/node", "/mirror-actions/greet/index.js"}
+	if len(args) != len(wantArgs) || args[0] != wantArgs[0] || args[1] != wantArgs[1] {
+		t.Errorf("args = %v, want %v", args, wantArgs)
 	}
 	if env["INPUT_GREETING"] != "hi" {
 		t.Errorf(`env["INPUT_GREETING"] = %q, want %q`, env["INPUT_GREETING"], "hi")

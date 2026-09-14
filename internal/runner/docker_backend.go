@@ -82,7 +82,22 @@ func (j *dockerJob) WorkspacePath() string {
 }
 
 func (j *dockerJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
-	cmd := exec.CommandContext(ctx, "docker", "cp", hostPath, j.containerID+":"+containerPath)
+	// docker cp only auto-creates the final path component of the
+	// destination — it does not create missing intermediate directories
+	// (a bare ubuntu:22.04 container has no /mirror-actions, /mirror-node,
+	// etc. to begin with). mkdir -p the exact target first, then copy
+	// hostPath's *contents* into it (the trailing "/." on the source is
+	// what makes docker cp copy contents into an existing directory
+	// instead of nesting hostPath's own basename one level deeper inside
+	// it).
+	mkdirCmd := exec.CommandContext(ctx, "docker", "exec", j.containerID, "mkdir", "-p", containerPath)
+	var mkdirStderr bytes.Buffer
+	mkdirCmd.Stderr = &mkdirStderr
+	if err := mkdirCmd.Run(); err != nil {
+		return fmt.Errorf("mkdir -p %s in container: %w: %s", containerPath, err, mkdirStderr.String())
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", "cp", hostPath+"/.", j.containerID+":"+containerPath)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -92,11 +107,6 @@ func (j *dockerJob) CopyToContainer(ctx context.Context, hostPath, containerPath
 }
 
 func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error) {
-	shell := spec.Shell
-	if shell == "" {
-		shell = "sh"
-	}
-
 	rel, err := filepath.Rel(j.hostFilesRoot, spec.FilesDir)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return StepResult{}, fmt.Errorf("FilesDir %q must be a subdirectory of the job's FilesRoot %q", spec.FilesDir, j.hostFilesRoot)
@@ -116,8 +126,21 @@ func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 		"-e", "GITHUB_OUTPUT="+containerFilesDir+"/github_output",
 		"-e", "GITHUB_STEP_SUMMARY="+containerFilesDir+"/github_step_summary",
 		j.containerID,
-		shell, "-c", spec.Command,
 	)
+
+	if len(spec.Args) > 0 {
+		// Direct exec, no shell — required for uses: steps. See StepSpec's
+		// doc comment: a shell silently drops inherited env vars with
+		// dashed names (confirmed for real: dash, /bin/sh in Ubuntu
+		// images), and GitHub Actions' INPUT_* convention uses dashes.
+		args = append(args, spec.Args...)
+	} else {
+		shell := spec.Shell
+		if shell == "" {
+			shell = "sh"
+		}
+		args = append(args, shell, "-c", spec.Command)
+	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	var stdout, stderr bytes.Buffer

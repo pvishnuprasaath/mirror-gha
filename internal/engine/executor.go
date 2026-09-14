@@ -93,9 +93,10 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		}
 
 		var command string
+		var args []string
 		var usesEnv map[string]string
 		if step.Uses != "" {
-			command, usesEnv, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
+			args, usesEnv, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
 			if err != nil {
 				return nil, fmt.Errorf("prepare uses: step %s: %w", id, err)
 			}
@@ -145,6 +146,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 
 		stepResult, err := runnerJob.Exec(stepCtx, runner.StepSpec{
 			Command:          command,
+			Args:             args,
 			Shell:            effectiveShell(step, job, wf),
 			Env:              env,
 			WorkingDirectory: workingDirectory,

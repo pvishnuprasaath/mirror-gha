@@ -1,0 +1,19 @@
+# Demonstrates uses: with a local action — resolves ./path relative to the
+# job workspace (repo root, by default), executes its Node entry point for
+# real, and reads its output back via steps.<id>.outputs.<name>.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-local-action.yml
+name: uses local action
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: ./examples/workflows/actions/hello-action
+        with:
+          who-to-greet: 'mirror-gha'
+      - name: use the output
+        run: 'echo "Got greeting: ${{ steps.greet.outputs.greeting }}"'
