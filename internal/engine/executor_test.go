@@ -31,6 +31,14 @@ type fakeJob struct {
 	workspaceDir string
 	execSpecs    []runner.StepSpec
 	dockerSpecs  []runner.DockerActionSpec
+	platform     string // Platform() returns "linux" if this is empty
+}
+
+func (j *fakeJob) Platform() string {
+	if j.platform == "" {
+		return "linux"
+	}
+	return j.platform
 }
 
 func (j *fakeJob) FilesRoot() string     { return j.dir }

@@ -49,6 +49,9 @@ func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step S
 	// source directory at all — the image itself is the action.
 	// entrypoint/args come only from this step's own with: block.
 	if ref.Docker {
+		if p.RunnerJob.Platform() != "linux" {
+			return usesStepPlan{}, fmt.Errorf("docker actions require a Linux job (this job is running on %s) — real GitHub Actions only supports Docker container actions on Linux runners", p.RunnerJob.Platform())
+		}
 		spec := &runner.DockerActionSpec{Image: ref.DockerImage}
 		if v, ok := with["entrypoint"]; ok && v != "" {
 			spec.Entrypoint = strings.Fields(v)
@@ -93,7 +96,7 @@ func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step S
 	switch {
 	case strings.HasPrefix(metadata.Runs.Using, "node"):
 		if !*p.NodeReady {
-			nodeDir, err := actions.EnsureNode(cacheRoot)
+			nodeDir, err := actions.EnsureNode(cacheRoot, p.RunnerJob.Platform())
 			if err != nil {
 				return usesStepPlan{}, fmt.Errorf("ensure node runtime: %w", err)
 			}
@@ -124,6 +127,9 @@ func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step S
 		return plan, nil
 
 	case metadata.Runs.Using == "docker":
+		if p.RunnerJob.Platform() != "linux" {
+			return usesStepPlan{}, fmt.Errorf("docker actions require a Linux job (this job is running on %s) — real GitHub Actions only supports Docker container actions on Linux runners", p.RunnerJob.Platform())
+		}
 		image, err := actions.ResolveDockerImage(ctx, hostSourceDir, step.Uses, metadata.Runs)
 		if err != nil {
 			return usesStepPlan{}, fmt.Errorf("resolve docker image for %s: %w", step.Uses, err)

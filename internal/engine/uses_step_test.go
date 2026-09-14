@@ -275,3 +275,15 @@ runs:
 		t.Error("nodeReady = true, want false — a Docker action must never trigger Node setup")
 	}
 }
+
+func TestPrepareUsesStep_DockerActionRejectedOnNonLinuxJob(t *testing.T) {
+	p := runStepParams{
+		RunnerJob: &fakeJob{platform: "darwin"},
+		NodeReady: new(bool),
+	}
+	actx := NewContext(&Workflow{}, &Job{})
+	_, err := prepareUsesStep(context.Background(), p, "step", Step{Uses: "docker://alpine:3.19"}, actx)
+	if err == nil {
+		t.Fatal("prepareUsesStep() error = nil, want error rejecting a docker:// step on a non-Linux job")
+	}
+}

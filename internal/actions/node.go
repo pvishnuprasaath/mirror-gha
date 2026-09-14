@@ -38,16 +38,26 @@ func nodeArch() (string, error) {
 }
 
 // EnsureNode downloads and caches the pinned Node build at
-// cacheRoot/node/<version>/<arch>/, returning that directory. Assumes the
-// job container's architecture matches the host's (true for default
-// Docker Desktop behavior) — a documented, not-yet-configurable assumption.
-func EnsureNode(cacheRoot string) (string, error) {
+// cacheRoot/node/<version>/<platform>/<arch>/, returning that directory.
+// platform must be "linux" (Docker backend — the container's own OS,
+// independent of whatever OS mirror-gha's own process runs on) or
+// "darwin" (macOS host backend — mirror-gha's own process OS, since
+// there's no container to target a different one). Assumes the target
+// architecture matches the host's (true for default Docker Desktop
+// behavior on Linux jobs, and trivially true for host-mode darwin jobs
+// since there's no cross-arch concept there at all) — a documented,
+// not-yet-configurable assumption.
+func EnsureNode(cacheRoot, platform string) (string, error) {
+	if platform != "linux" && platform != "darwin" {
+		return "", fmt.Errorf("unsupported Node runtime platform: %q (want \"linux\" or \"darwin\")", platform)
+	}
+
 	arch, err := nodeArch()
 	if err != nil {
 		return "", err
 	}
 
-	dest := filepath.Join(cacheRoot, "node", PinnedNodeVersion, arch)
+	dest := filepath.Join(cacheRoot, "node", PinnedNodeVersion, platform, arch)
 	if _, err := os.Stat(filepath.Join(dest, "bin", "node")); err == nil {
 		return dest, nil
 	}
@@ -60,7 +70,7 @@ func EnsureNode(cacheRoot string) (string, error) {
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	url := fmt.Sprintf("https://nodejs.org/dist/v%s/node-v%s-linux-%s.tar.gz", PinnedNodeVersion, PinnedNodeVersion, arch)
+	url := fmt.Sprintf("https://nodejs.org/dist/v%s/node-v%s-%s-%s.tar.gz", PinnedNodeVersion, PinnedNodeVersion, platform, arch)
 	curl := exec.Command("curl", "-fsSL", "-o", tmpPath, url)
 	if out, err := curl.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("download %s: %w: %s", url, err, out)

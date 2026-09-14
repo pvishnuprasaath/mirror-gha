@@ -50,3 +50,8 @@ func (j *dryRunJob) RunDockerAction(ctx context.Context, spec DockerActionSpec) 
 func (j *dryRunJob) Stop(ctx context.Context) error {
 	return os.RemoveAll(j.dir)
 }
+
+// Platform reports "linux" — dry-run mode never actually downloads or
+// executes anything, so this value is never load-bearing, but it must
+// match some real backend's convention rather than an invented one.
+func (j *dryRunJob) Platform() string { return "linux" }

@@ -454,3 +454,9 @@ func (j *dockerJob) Stop(ctx context.Context) error {
 	}
 	return stopErr
 }
+
+// Platform always reports "linux" — the Docker backend's job container is
+// always a Linux image, regardless of what OS mirror-gha's own process is
+// running on (this project is routinely developed and tested on a Mac
+// host that runs Linux job containers via Docker Desktop).
+func (j *dockerJob) Platform() string { return "linux" }

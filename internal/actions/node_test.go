@@ -10,7 +10,7 @@ func TestEnsureNode_DownloadsAndCaches(t *testing.T) {
 	requireNetwork(t)
 
 	cacheRoot := t.TempDir()
-	dir, err := EnsureNode(cacheRoot)
+	dir, err := EnsureNode(cacheRoot, "linux")
 	if err != nil {
 		t.Fatalf("EnsureNode() error = %v", err)
 	}
@@ -18,12 +18,32 @@ func TestEnsureNode_DownloadsAndCaches(t *testing.T) {
 		t.Errorf("expected bin/node in %s: %v", dir, err)
 	}
 
-	dir2, err := EnsureNode(cacheRoot)
+	dir2, err := EnsureNode(cacheRoot, "linux")
 	if err != nil {
 		t.Fatalf("EnsureNode() second call error = %v", err)
 	}
 	if dir2 != dir {
 		t.Errorf("second EnsureNode() = %q, want same path %q", dir2, dir)
+	}
+}
+
+func TestEnsureNode_DarwinPlatform(t *testing.T) {
+	requireNetwork(t)
+
+	cacheRoot := t.TempDir()
+	dir, err := EnsureNode(cacheRoot, "darwin")
+	if err != nil {
+		t.Fatalf("EnsureNode() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bin", "node")); err != nil {
+		t.Errorf("expected bin/node in %s: %v", dir, err)
+	}
+}
+
+func TestEnsureNode_InvalidPlatform(t *testing.T) {
+	_, err := EnsureNode(t.TempDir(), "windows")
+	if err == nil {
+		t.Fatal("EnsureNode() error = nil, want error for an unsupported platform")
 	}
 }
 

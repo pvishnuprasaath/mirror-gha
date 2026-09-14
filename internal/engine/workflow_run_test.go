@@ -39,6 +39,7 @@ func (j *alwaysSucceedJob) RunDockerAction(ctx context.Context, spec runner.Dock
 	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
 }
 func (j *alwaysSucceedJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
+func (j *alwaysSucceedJob) Platform() string               { return "linux" }
 
 // alwaysFailBackend fails every step it executes.
 type alwaysFailBackend struct{}
@@ -68,6 +69,7 @@ func (j *alwaysFailJob) RunDockerAction(ctx context.Context, spec runner.DockerA
 	return runner.StepResult{ExitCode: 1}, nil
 }
 func (j *alwaysFailJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
+func (j *alwaysFailJob) Platform() string               { return "linux" }
 
 func succeedSelector(runsOn string) (runner.Backend, error) {
 	return alwaysSucceedBackend{}, nil

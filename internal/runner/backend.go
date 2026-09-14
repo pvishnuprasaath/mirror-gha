@@ -90,6 +90,13 @@ type Job interface {
 	// DockerActionSpec's doc comment for why this can't just be an Exec.
 	RunDockerAction(ctx context.Context, spec DockerActionSpec) (StepResult, error)
 	Stop(ctx context.Context) error
+	// Platform reports the OS the job's steps actually execute under —
+	// "linux" for the Docker backend (regardless of what OS mirror-gha
+	// itself runs on) or "darwin" for the macOS host backend. Used by the
+	// engine layer to make backend-aware decisions (which Node runtime to
+	// download, whether a Docker action step is even possible) without
+	// needing to know which concrete backend is running.
+	Platform() string
 }
 
 // ContainerSpec is one job's `container:` override, or one entry of its
