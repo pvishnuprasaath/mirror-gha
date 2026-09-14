@@ -70,14 +70,21 @@ execution path):
 3. **Actions Runtime** (`internal/actions`) — resolves `uses:` references
    (Marketplace, local `./path`, `docker://`). Executes JS actions, Docker
    actions (builds/pulls the action's own image), composite actions
-   (recursively expands into the step graph). All three supported from day
-   one. **JS actions require explicit Node runtime resolution, not just
-   "execute JS"**: an action's `runs.using` names a concrete version
-   (`node16`, `node20`, etc.), and the job container must have that
-   version available — act's own resolution path (`GetNodeToolFullPath`)
-   is the reference implementation to follow here; a container image with
-   only one Node version baked in will silently misbehave for actions
-   pinned to a different one.
+   (recursively expands into the step graph). JS actions are implemented
+   (see "JS Actions Runtime" below); Docker and composite are sequenced
+   after.
+
+   **Correction (2026-09-14):** an earlier version of this section claimed
+   act resolves a specific Node *version* per action (citing
+   `GetNodeToolFullPath` as doing per-version resolution). Verified against
+   act's actual source and that's wrong — `GetNodeToolFullPath`
+   (`pkg/runner/run_context.go`) just execs `node -e "console.log(process.execPath)"`
+   inside the already-running container to find whatever Node happens to
+   be on `PATH`, and treats `node12`/`16`/`20`/`24` identically
+   (`pkg/model/action.go`'s `IsNode()`) — no per-version binary selection
+   anywhere in act. mirror-gha follows the same simplification: one pinned
+   Node build, used for every JS action in a job regardless of declared
+   `runs.using`. See "JS Actions Runtime" for the actual implementation.
 
    Composite actions must also each get their own nested execution
    context — a composite action's steps can themselves `uses:` further
@@ -114,6 +121,101 @@ and `hashFiles()` both require somewhere real to operate on.
 Known fidelity caveat, not yet addressed: the container runs as root, so
 files a step writes can end up root-owned on the host on Linux (not an
 issue on macOS via Docker Desktop's filesystem layer).
+
+## JS Actions Runtime
+
+**Scope:** `uses:` resolving to a JS action, either Marketplace
+(`owner/repo[/subpath]@ref`) or local (`./path`, workspace-relative).
+Docker actions (`docker://...`) and composite actions are separate,
+already-sequenced follow-ups — a non-JS `runs.using` (`docker`,
+`composite`) is rejected with a clear error, not approximated.
+
+Every design decision below was checked against act's actual source
+(`nektos/act`, per explicit direction to treat it as the reference
+implementation for exactly this kind of choice), not just inferred.
+
+**Step model:** `Step` gains `Uses string` and `With map[string]string`.
+A step with both `run:` and `uses:` set is a hard error (real GitHub
+Actions disallows it too, and silently preferring one would hide a
+workflow-authoring mistake). `with:` values get `${{ }}` expression
+substitution before use, same as `run:` commands.
+
+**Action resolution and caching** (`internal/actions`, new package):
+- `owner/repo[/subpath]@ref` fetches via GitHub's codeload tarball
+  endpoint — `https://codeload.github.com/<owner>/<repo>/tar.gz/<ref>`
+  resolves tags, branches, and commit SHAs uniformly, no auth needed for
+  public actions.
+- **Fetches shell out to `curl`, and extraction to `tar`** — deliberately
+  not Go's `net/http`. This machine's corporate network already broke Go's
+  own TLS trust this session (`go get` failed on a cert-verification error
+  `curl` sailed through fine — Go on Darwin doesn't reliably pick up the
+  system trust store the way `curl`'s Security-framework-backed stack
+  does). Checked whether act avoids this: it doesn't — act uses `go-git`
+  (`pkg/runner/action_cache.go`), whose HTTP transport is itself built on
+  `net/http`, so it would hit the identical wall on a Netskope-intercepted
+  network. The `curl`/`tar` shell-out isn't an arbitrary preference; it's
+  solving a problem act's typical network environment doesn't have, and it
+  matches the same shell-out pattern `install.sh` already uses.
+- Cached at `~/.cache/mirror-gha/actions/<owner>/<repo>/<ref>/`, keyed by
+  the literal ref string — a mutable branch ref like `@main` won't
+  auto-refresh. Matches act's own cache-by-ref behavior
+  (`~/.cache/act`, `pkg/runner/run_context.go`) and its same staleness
+  tradeoff, accepted rather than solved.
+- `action.yml`/`action.yaml` parsed into `{Name, Inputs map[string]
+  {Description, Required, Default}, Outputs, Runs{Using, Main}}` —
+  matches act's own model shape (`pkg/model/action.go`).
+
+**Node runtime — one pinned build, not per-version resolution.** Checked
+against act's `GetNodeToolFullPath` (`pkg/runner/run_context.go`) and
+`IsNode()` (`pkg/model/action.go`): act does not resolve a specific Node
+version per action at all. It probes whatever Node binary is already on
+`PATH` inside the container and uses that uniformly for every
+`node12`/`16`/`20`/`24` action. mirror-gha follows the same
+simplification — download and cache **one** pinned Node LTS build
+(`~/.cache/mirror-gha/node/`, via the same `curl`+`tar` mechanism, arch
+selected from `runtime.GOARCH` under the documented assumption that the
+container's architecture matches the host's, true for default Docker
+Desktop behavior), and use it for every JS action in a job regardless of
+its declared `runs.using`. This drops an entire dimension of complexity
+(multi-version toolcache) that act itself doesn't have either.
+
+**Getting Node and action source into the container — `docker cp`, not a
+pre-declared mount.** Checked act's actual injection mechanism
+(`pkg/container/docker_run.go`'s `CopyTarStream`): it uses the Docker
+Engine API's `CopyToContainer` — the SDK equivalent of `docker cp` — to
+inject action source into the already-running container on demand, per
+step, not via a mount declared at container-start. Since mirror-gha
+already shells out to the `docker` CLI rather than using the SDK, the
+direct equivalent is `docker cp <hostPath> <containerID>:<destPath>`
+immediately before the step that needs it. `runner.Job` gains one new
+method for this: `CopyToContainer(ctx, hostPath, containerPath) error` —
+implemented as a real `docker cp` in `LinuxDockerBackend`'s job type, a
+no-op in `DryRunBackend`'s. No change needed to `Backend.StartJob` at
+all — simpler than the pre-mount design originally considered.
+
+**Execution flow for a `uses:` step:** resolve the action (local path
+under the workspace, or fetch+cache remote) -> parse `action.yml` ->
+reject non-Node `runs.using` with a clear error -> ensure the pinned
+Node build is cached, `docker cp` it into the container once per job at
+the fixed path `/mirror-node` (the first JS-action step in a job
+triggers this; later JS steps in the same job reuse it, tracked by a
+local bool in the job's step loop) -> `docker cp` this step's resolved
+action source to `/mirror-actions/<step-id>` (the same step ID already
+computed for `steps.<id>.*` context lookups — unique per step, so
+distinct actions used in the same job never collide) -> compute
+`INPUT_*` env vars (exact transform
+verified against act's `pkg/runner/action.go`: `"INPUT_" +
+regexp("[^A-Z0-9-]").ReplaceAllString(strings.ToUpper(key), "_")` —
+uppercase, dashes preserved, everything else non-alphanumeric becomes
+`_`; action-metadata `default` values fill in inputs `with:` doesn't
+set) plus `GITHUB_ACTION_PATH` -> exec
+`<node>/bin/node <action>/<main>`.
+
+Outputs and env updates need **zero** new plumbing: JS actions write via
+`$GITHUB_OUTPUT`/`$GITHUB_ENV`, the same file-based protocol every
+`run:` step already uses. `working-directory:` isn't valid on `uses:`
+steps in real GitHub Actions either — `uses:` steps always execute
+against the job workspace, no override.
 
 ## Data flow
 
