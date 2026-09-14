@@ -10,25 +10,32 @@ import (
 
 type fakeBackend struct {
 	results []runner.StepResult
+	lastJob *fakeJob // set by StartJob, lets tests inspect what ran after RunJob returns
 }
 
-func (f *fakeBackend) StartJob(ctx context.Context) (runner.Job, error) {
+func (f *fakeBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err
 	}
-	return &fakeJob{results: f.results, dir: dir}, nil
+	job := &fakeJob{results: f.results, dir: dir, workspaceDir: hostWorkspaceDir}
+	f.lastJob = job
+	return job, nil
 }
 
 type fakeJob struct {
-	results []runner.StepResult
-	calls   int
-	dir     string
+	results      []runner.StepResult
+	calls        int
+	dir          string
+	workspaceDir string
+	execSpecs    []runner.StepSpec
 }
 
-func (j *fakeJob) FilesRoot() string { return j.dir }
+func (j *fakeJob) FilesRoot() string     { return j.dir }
+func (j *fakeJob) WorkspacePath() string { return j.workspaceDir }
 
 func (j *fakeJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
+	j.execSpecs = append(j.execSpecs, spec)
 	r := j.results[j.calls]
 	j.calls++
 	return r, nil
@@ -52,7 +59,7 @@ func TestRunJob_AllStepsSucceed(t *testing.T) {
 		{ExitCode: 0, Stdout: "two\n"},
 	}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
@@ -75,7 +82,7 @@ func TestRunJob_StepFailsStopsJob(t *testing.T) {
 	}
 	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 1}}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
@@ -101,7 +108,7 @@ func TestRunJob_ContinueOnErrorKeepsGoing(t *testing.T) {
 		{ExitCode: 0, Stdout: "two\n"},
 	}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
@@ -123,7 +130,7 @@ func TestRunJob_IfConditionSkipsStep(t *testing.T) {
 	}
 	backend := &fakeBackend{results: []runner.StepResult{}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
@@ -174,7 +181,7 @@ func TestRunJob_ComputesOutputsFromJobOutputsField(t *testing.T) {
 	}
 	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
@@ -201,11 +208,88 @@ func TestRunJob_OutputsFlowToLaterSteps(t *testing.T) {
 		{ExitCode: 0, Stdout: "got hi\n"},
 	}}
 
-	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("RunJob() error = %v", err)
 	}
 	if result.Conclusion != "success" {
 		t.Errorf("Conclusion = %q, want %q", result.Conclusion, "success")
+	}
+}
+
+func TestRunJob_RejectsEmptyWorkspaceDir(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{RunsOn: "ubuntu-latest", Steps: []Step{{ID: "one", Run: "echo hi"}}}
+	backend := &fakeBackend{}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{})
+	if err == nil {
+		t.Fatal("RunJob() with empty WorkspaceDir error = nil, want error")
+	}
+}
+
+func TestRunJob_SetsGithubWorkspaceContext(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo ${{ github.workspace }}"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+	workspaceDir := t.TempDir()
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: workspaceDir})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	// fakeJob.WorkspacePath() echoes back whatever hostWorkspaceDir it was
+	// started with, so a substituted command containing that value proves
+	// RunJob actually threads opts.WorkspaceDir through to backend.StartJob
+	// and reads it back into the github context.
+	spec := backend.lastJob.execSpecs[0]
+	if spec.Command != "echo "+workspaceDir {
+		t.Errorf("Command = %q, want %q", spec.Command, "echo "+workspaceDir)
+	}
+	if spec.Env["GITHUB_WORKSPACE"] != workspaceDir {
+		t.Errorf(`Env["GITHUB_WORKSPACE"] = %q, want %q`, spec.Env["GITHUB_WORKSPACE"], workspaceDir)
+	}
+}
+
+func TestRunJob_DefaultWorkingDirectoryIsWorkspace(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "pwd"}}, // no working-directory set anywhere
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+	workspaceDir := t.TempDir()
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: workspaceDir})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	spec := backend.lastJob.execSpecs[0]
+	if spec.WorkingDirectory != workspaceDir {
+		t.Errorf("WorkingDirectory = %q, want %q (should default to the workspace)", spec.WorkingDirectory, workspaceDir)
+	}
+}
+
+func TestRunJob_ExplicitWorkingDirectoryOverridesWorkspaceDefault(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "pwd", WorkingDirectory: "/custom"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	spec := backend.lastJob.execSpecs[0]
+	if spec.WorkingDirectory != "/custom" {
+		t.Errorf("WorkingDirectory = %q, want %q (explicit setting should win over the workspace default)", spec.WorkingDirectory, "/custom")
 	}
 }

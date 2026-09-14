@@ -9,6 +9,17 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **Job workspace.** Every job bind-mounts a real directory (default:
+  wherever `mirror run` was invoked from, overridable via `--workdir`)
+  at `/github/workspace` — a genuine bind mount, not a copy, so writes
+  land back on the real host filesystem and existing project files are
+  visible from the first step. Exposed via `github.workspace`,
+  `$GITHUB_WORKSPACE`, and as the default step working directory. This
+  closes a prerequisite gap the original architecture missed
+  entirely — jobs previously had no repo mounted at all, and it's the
+  foundation the upcoming Actions Runtime needs (`actions/checkout`,
+  `hashFiles()`). Verified for real: files written inside the container
+  confirmed present on the host after the job exits, and vice versa.
 - **Release pipeline.** GoReleaser (`.goreleaser.yaml`) + a GitHub
   Actions workflow (`.github/workflows/release.yml`) triggered on `v*`
   tags — builds linux/darwin × amd64/arm64 binaries, checksums, a

@@ -29,7 +29,14 @@ type BackendSelector func(runsOn string) (runner.Backend, error)
 // expanding each job's `strategy.matrix` combinations and propagating each
 // job's result/outputs to dependents via the `needs` context. A job whose
 // `needs:` didn't all succeed is reported as "skipped", not run.
-func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelector) (*WorkflowResult, error) {
+// workspaceDir is bind-mounted into every job as its workspace (see
+// runner.Backend.StartJob) — typically the directory `mirror run` was
+// invoked from, or an explicit override.
+func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelector, workspaceDir string) (*WorkflowResult, error) {
+	if workspaceDir == "" {
+		return nil, fmt.Errorf("workspaceDir must not be empty")
+	}
+
 	order, err := TopoSortJobs(wf.Jobs)
 	if err != nil {
 		return nil, err
@@ -90,8 +97,9 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 			}
 
 			jr, err := RunJob(runCtx, wf, &job, backend, JobRunOptions{
-				Needs:  outcomes,
-				Matrix: combo,
+				Needs:        outcomes,
+				Matrix:       combo,
+				WorkspaceDir: workspaceDir,
 			})
 			if cancel != nil {
 				cancel()

@@ -46,6 +46,29 @@ mirror run --dryrun workflow.yml   # runs the real needs/matrix/if orchestration
                                     # since "would this even run here" is what it's for.
 ```
 
+## The job workspace
+
+Every job bind-mounts a real directory on disk — by default, wherever
+`mirror run` was invoked from — into the job as its workspace, at
+`/github/workspace` (act's own convention). This is a genuine bind mount,
+not a copy: files a step writes there land back on your real filesystem,
+and files already on disk (your actual project) are visible from the
+first step onward.
+
+```bash
+mirror run workflow.yml                    # workspace = current directory
+mirror run --workdir /path/to/repo workflow.yml   # workspace = an explicit directory
+```
+
+Steps get this via three equivalent handles: the `github.workspace`
+expression context, the `$GITHUB_WORKSPACE` environment variable, and as
+the *default* working directory whenever a step/job/workflow doesn't set
+`working-directory`/`defaults.run.working-directory` explicitly.
+
+One fidelity caveat, not yet addressed: jobs run as root inside the
+container, so files a step writes can end up root-owned on the host on
+Linux. Not an issue on macOS via Docker Desktop's filesystem layer.
+
 ## What's supported today
 
 `mirror` executes a job's `run:` steps in one real, long-lived Ubuntu
@@ -61,9 +84,9 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   default-value pattern the same way it does on GitHub. Built-in
   functions: `success()`, `failure()`, `always()`, `cancelled()`,
   `contains()`, `startsWith()`, `endsWith()`, `format()`, `join()`,
-  `toJSON()`, `fromJSON()`. `hashFiles()` isn't implemented yet — it
-  needs a real checked-out workspace — and returns a clear error rather
-  than a wrong result.
+  `toJSON()`, `fromJSON()`. `hashFiles()` isn't implemented yet (a real
+  workspace exists now, so nothing blocks it — it just hasn't been built)
+  and returns a clear error rather than a wrong result.
 - **`if:` conditions** — a step whose condition evaluates false is
   reported as `skipped`, not silently dropped.
 - **`continue-on-error: true`** — a failing step doesn't stop the job.

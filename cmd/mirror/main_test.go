@@ -64,3 +64,12 @@ func TestRunMain_NoWorkflowArgument(t *testing.T) {
 		t.Fatalf("runMain([--list]) with no workflow path = %d, want 1", exitCode)
 	}
 }
+
+func TestRunMain_WorkdirFlag(t *testing.T) {
+	requireDocker(t)
+
+	exitCode := runMain([]string{"--workdir", t.TempDir(), "testdata/simple.yml"})
+	if exitCode != 0 {
+		t.Fatalf("runMain([--workdir, ...]) = %d, want 0", exitCode)
+	}
+}

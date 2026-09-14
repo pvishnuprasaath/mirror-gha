@@ -29,12 +29,13 @@ type StepReport struct {
 
 // JobRunOptions carries the parts of a job's execution context that come
 // from the surrounding workflow (a multi-job DAG's `needs:` outcomes, one
-// matrix combination, and any locally-supplied `vars`) rather than the job
-// definition itself.
+// matrix combination, any locally-supplied `vars`, and the host workspace
+// directory to mount) rather than the job definition itself.
 type JobRunOptions struct {
-	Needs  map[string]JobOutcome
-	Matrix MatrixCombination
-	Vars   map[string]string
+	Needs        map[string]JobOutcome
+	Matrix       MatrixCombination
+	Vars         map[string]string
+	WorkspaceDir string // host directory bind-mounted as the job's workspace
 }
 
 // RunJob executes every step of job in order against backend, evaluating
@@ -46,19 +47,27 @@ type JobRunOptions struct {
 // All steps run inside the same job-scoped environment (one container for
 // the whole job, not one per step) so filesystem state — checked-out
 // files, installed packages, PATH changes — persists step to step, the
-// same way real GitHub Actions and act both work.
+// same way real GitHub Actions and act both work. opts.WorkspaceDir is
+// bind-mounted into that environment and exposed as GITHUB_WORKSPACE /
+// github.workspace / the default step working directory.
 func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend, opts JobRunOptions) (*JobResult, error) {
+	if opts.WorkspaceDir == "" {
+		return nil, fmt.Errorf("JobRunOptions.WorkspaceDir must not be empty")
+	}
+
 	actx := NewContext(wf, job)
 	actx.Needs = opts.Needs
 	actx.Matrix = opts.Matrix
 	actx.Vars = opts.Vars
 	result := &JobResult{Conclusion: "success"}
 
-	runnerJob, err := backend.StartJob(ctx)
+	runnerJob, err := backend.StartJob(ctx, opts.WorkspaceDir)
 	if err != nil {
 		return nil, fmt.Errorf("start job: %w", err)
 	}
 	defer runnerJob.Stop(ctx)
+
+	actx.GitHub["workspace"] = runnerJob.WorkspacePath()
 
 	for i, step := range job.Steps {
 		id := step.ID
@@ -99,6 +108,12 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		for k, v := range step.Env {
 			env[k] = v
 		}
+		env["GITHUB_WORKSPACE"] = runnerJob.WorkspacePath()
+
+		workingDirectory := effectiveWorkingDirectory(step, job, wf)
+		if workingDirectory == "" {
+			workingDirectory = runnerJob.WorkspacePath()
+		}
 
 		stepCtx := ctx
 		var cancel context.CancelFunc
@@ -110,7 +125,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			Command:          command,
 			Shell:            effectiveShell(step, job, wf),
 			Env:              env,
-			WorkingDirectory: effectiveWorkingDirectory(step, job, wf),
+			WorkingDirectory: workingDirectory,
 			FilesDir:         filesDir,
 		})
 		if cancel != nil {

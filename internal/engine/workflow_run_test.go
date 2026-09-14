@@ -14,17 +14,21 @@ import (
 // executor_test.go's scripted fakeBackend).
 type alwaysSucceedBackend struct{}
 
-func (alwaysSucceedBackend) StartJob(ctx context.Context) (runner.Job, error) {
+func (alwaysSucceedBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err
 	}
-	return &alwaysSucceedJob{dir: dir}, nil
+	return &alwaysSucceedJob{dir: dir, workspaceDir: hostWorkspaceDir}, nil
 }
 
-type alwaysSucceedJob struct{ dir string }
+type alwaysSucceedJob struct {
+	dir          string
+	workspaceDir string
+}
 
-func (j *alwaysSucceedJob) FilesRoot() string { return j.dir }
+func (j *alwaysSucceedJob) FilesRoot() string     { return j.dir }
+func (j *alwaysSucceedJob) WorkspacePath() string { return j.workspaceDir }
 func (j *alwaysSucceedJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
 }
@@ -33,17 +37,21 @@ func (j *alwaysSucceedJob) Stop(ctx context.Context) error { return os.RemoveAll
 // alwaysFailBackend fails every step it executes.
 type alwaysFailBackend struct{}
 
-func (alwaysFailBackend) StartJob(ctx context.Context) (runner.Job, error) {
+func (alwaysFailBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err
 	}
-	return &alwaysFailJob{dir: dir}, nil
+	return &alwaysFailJob{dir: dir, workspaceDir: hostWorkspaceDir}, nil
 }
 
-type alwaysFailJob struct{ dir string }
+type alwaysFailJob struct {
+	dir          string
+	workspaceDir string
+}
 
-func (j *alwaysFailJob) FilesRoot() string { return j.dir }
+func (j *alwaysFailJob) FilesRoot() string     { return j.dir }
+func (j *alwaysFailJob) WorkspacePath() string { return j.workspaceDir }
 func (j *alwaysFailJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 1}, nil
 }
@@ -66,7 +74,7 @@ func TestRunWorkflow_RunsInDependencyOrder(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir())
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -87,7 +95,7 @@ func TestRunWorkflow_SkipsJobWhenNeedFails(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir())
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -118,7 +126,7 @@ func TestRunWorkflow_PropagatesJobOutputsToNeeds(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir())
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -146,7 +154,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir())
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -161,6 +169,20 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 	}
 	if skipped == 0 {
 		t.Error("expected at least one matrix combination to be skipped after the first failure (fail-fast defaults to true)")
+	}
+}
+
+func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"a": {RunsOn: "ubuntu-latest", Steps: []Step{{ID: "s", Run: "echo a"}}},
+		},
+	}
+
+	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "")
+	if err == nil {
+		t.Fatal("RunWorkflow() with empty workspaceDir error = nil, want error")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -44,9 +45,10 @@ func main() {
 // runMode selects which of the mutually exclusive `run` behaviors to
 // perform: normal execution, or one of the read-only introspection modes.
 type runMode struct {
-	list   bool
-	graph  bool
-	dryRun bool
+	list    bool
+	graph   bool
+	dryRun  bool
+	workdir string // "" means: resolve from the process's current directory
 }
 
 // runMain parses `run` subcommand flags and dispatches to runCommand.
@@ -57,8 +59,9 @@ func runMain(args []string) int {
 	list := fs.Bool("list", false, "list jobs (and matrix combinations) without running them")
 	graph := fs.Bool("graph", false, "print the job dependency graph without running")
 	dryRun := fs.Bool("dryrun", false, "run the full needs/matrix/if orchestration without executing any step")
+	workdir := fs.String("workdir", "", "directory to bind-mount as the job workspace (default: current directory)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] <workflow.yml>")
+		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] <workflow.yml>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -71,7 +74,7 @@ func runMain(args []string) int {
 		return 1
 	}
 
-	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun})
+	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir})
 }
 
 // runCommand parses the workflow at path and, depending on mode, either
@@ -99,6 +102,20 @@ func runCommand(path string, mode runMode) int {
 		return printGraph(wf)
 	}
 
+	workspaceDir := mode.workdir
+	if workspaceDir == "" {
+		workspaceDir, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "resolve current directory: %v\n", err)
+			return 1
+		}
+	}
+	workspaceDir, err = filepath.Abs(workspaceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve workspace directory: %v\n", err)
+		return 1
+	}
+
 	selectBackend := runner.SelectBackend
 	if mode.dryRun {
 		selectBackend = func(runsOn string) (runner.Backend, error) {
@@ -112,7 +129,7 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend)
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

@@ -20,6 +20,11 @@ const linuxRunnerImage = "ubuntu:22.04"
 // the container.
 const containerFilesMount = "/mirror-files"
 
+// containerWorkspaceMount is where the host workspace directory is
+// bind-mounted inside the container — the same path act itself uses, so
+// workflows authored/tested against that mental model transfer directly.
+const containerWorkspaceMount = "/github/workspace"
+
 type LinuxDockerBackend struct {
 	image string
 }
@@ -31,7 +36,14 @@ func NewLinuxDockerBackend() *LinuxDockerBackend {
 // StartJob starts one long-lived container for the whole job. Every step
 // execs into this same container (see dockerJob.Exec) so filesystem state
 // persists across steps, matching real GitHub Actions/act semantics.
-func (b *LinuxDockerBackend) StartJob(ctx context.Context) (Job, error) {
+// hostWorkspaceDir is bind-mounted read-write at containerWorkspaceMount —
+// this is a direct bind mount, not a copy, so steps operate on (and can
+// modify) the real files on disk.
+func (b *LinuxDockerBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (Job, error) {
+	if hostWorkspaceDir == "" {
+		return nil, fmt.Errorf("hostWorkspaceDir must not be empty")
+	}
+
 	hostFilesRoot, err := os.MkdirTemp("", "mirror-job-")
 	if err != nil {
 		return nil, fmt.Errorf("create job files root: %w", err)
@@ -39,6 +51,7 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context) (Job, error) {
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
 		"-v", hostFilesRoot+":"+containerFilesMount,
+		"-v", hostWorkspaceDir+":"+containerWorkspaceMount,
 		b.image, "sleep", "infinity",
 	)
 	var stdout, stderr bytes.Buffer
@@ -62,6 +75,10 @@ type dockerJob struct {
 
 func (j *dockerJob) FilesRoot() string {
 	return j.hostFilesRoot
+}
+
+func (j *dockerJob) WorkspacePath() string {
+	return containerWorkspaceMount
 }
 
 func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error) {
@@ -121,7 +138,9 @@ func (j *dockerJob) Stop(ctx context.Context) error {
 	// Always attempt cleanup of the host-side files root, even if the
 	// container removal above failed — it's a plain temp directory, not
 	// something Docker knows about, and leaving it behind on every job
-	// run silently accumulates in the OS temp directory forever.
+	// run silently accumulates in the OS temp directory forever. Note:
+	// the workspace mount is the caller's own directory (e.g. their repo)
+	// and must never be removed here.
 	if err := os.RemoveAll(j.hostFilesRoot); err != nil && stopErr == nil {
 		return fmt.Errorf("remove job files root %s: %w", j.hostFilesRoot, err)
 	}

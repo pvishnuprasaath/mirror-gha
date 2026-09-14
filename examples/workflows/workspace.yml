@@ -1,0 +1,23 @@
+# Demonstrates the job workspace: the directory `mirror run` was invoked
+# from (or --workdir, if given) is bind-mounted into the job — real
+# project files are visible, the default working directory is the
+# workspace, and writes land back on the real host filesystem.
+#
+# Try it (from the repo root, so README.md is visible):
+#   mirror run examples/workflows/workspace.yml
+name: workspace
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: default working directory is the workspace
+        run: pwd
+      - name: real project files are visible
+        run: ls README.md go.mod
+      - name: github.workspace context matches $GITHUB_WORKSPACE
+        run: |
+          echo "context:  ${{ github.workspace }}"
+          echo "env var:  $GITHUB_WORKSPACE"
+      - name: writes land back on the real host filesystem
+        run: echo "written by mirror" > .workspace-demo-output.txt

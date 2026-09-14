@@ -34,13 +34,21 @@ type Job interface {
 	// step's FilesDir as a subdirectory of this root so the backend can
 	// make it visible inside the running environment.
 	FilesRoot() string
+	// WorkspacePath is where the job's workspace (the bind-mounted host
+	// directory `mirror run` was invoked from, or overridden via
+	// --workdir) is visible from inside the running environment. Callers
+	// use this for the GITHUB_WORKSPACE env var, the github.workspace
+	// context value, and as the default step working directory.
+	WorkspacePath() string
 	Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 	Stop(ctx context.Context) error
 }
 
 // Backend starts a job's execution environment for a given `runs-on` label.
 type Backend interface {
-	StartJob(ctx context.Context) (Job, error)
+	// StartJob starts the environment, bind-mounting hostWorkspaceDir so
+	// its contents are visible at Job.WorkspacePath() from inside it.
+	StartJob(ctx context.Context, hostWorkspaceDir string) (Job, error)
 }
 
 // ErrUnsupportedRunner is returned by SelectBackend for runner labels that

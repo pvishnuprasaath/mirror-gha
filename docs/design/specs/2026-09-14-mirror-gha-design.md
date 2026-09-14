@@ -96,6 +96,25 @@ execution path):
    binary, a `dashboard` subcommand. `mirror run` alone is always
    full-parity and scriptable, independent of whether the dashboard is open.
 
+## Job workspace
+
+**Implemented.** A real repo directory is bind-mounted into every job —
+not a copy, a direct mount — at `/github/workspace` (act's own
+convention). Default source is wherever `mirror run` was invoked from;
+overridable via `--workdir`. Exposed to steps three ways: the
+`github.workspace` expression context, the `GITHUB_WORKSPACE` env var,
+and as the default step working directory whenever
+`working-directory`/`defaults.run.working-directory` isn't set.
+
+This was a prerequisite gap the original architecture missed entirely —
+jobs had no repo mounted at all, so every step only ever touched `/tmp`.
+It's also the foundation the Actions Runtime needs: `actions/checkout`
+and `hashFiles()` both require somewhere real to operate on.
+
+Known fidelity caveat, not yet addressed: the container runs as root, so
+files a step writes can end up root-owned on the host on Linux (not an
+issue on macOS via Docker Desktop's filesystem layer).
+
 ## Data flow
 
 ```

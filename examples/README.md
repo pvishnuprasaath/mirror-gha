@@ -17,6 +17,7 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`expression-functions.yml`](workflows/expression-functions.yml) | Built-in expression functions (`startsWith`, `format`) and real `\|\|` short-circuit default-value semantics |
 | [`job-dependencies.yml`](workflows/job-dependencies.yml) | Multi-job `needs:` — a `deploy` job waits for `build` and reads its declared job output via the `needs` context |
 | [`matrix-build.yml`](workflows/matrix-build.yml) | `strategy.matrix` — the job runs once per axis value, each with its own `matrix` context |
+| [`workspace.yml`](workflows/workspace.yml) | The job workspace — real project files visible, default working directory, `github.workspace`/`$GITHUB_WORKSPACE`, writes land back on the real host filesystem |
 
 ## What's not shown here (yet)
 

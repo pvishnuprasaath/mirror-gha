@@ -8,7 +8,7 @@ import (
 
 func TestDryRunBackend_ExecSucceedsWithoutDocker(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background())
+	job, err := backend.StartJob(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -24,7 +24,7 @@ func TestDryRunBackend_ExecSucceedsWithoutDocker(t *testing.T) {
 
 func TestDryRunBackend_StopRemovesFilesRoot(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background())
+	job, err := backend.StartJob(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -35,5 +35,17 @@ func TestDryRunBackend_StopRemovesFilesRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filesRoot); !os.IsNotExist(err) {
 		t.Errorf("FilesRoot %s still exists after Stop()", filesRoot)
+	}
+}
+
+func TestDryRunBackend_WorkspacePathReportsGivenDir(t *testing.T) {
+	workspaceDir := t.TempDir()
+	backend := DryRunBackend{}
+	job, err := backend.StartJob(context.Background(), workspaceDir)
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	if job.WorkspacePath() != workspaceDir {
+		t.Errorf("WorkspacePath() = %q, want %q", job.WorkspacePath(), workspaceDir)
 	}
 }
