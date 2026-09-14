@@ -1,1 +1,13 @@
-bin/
+/bin/
+*.test
+*.out
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Local scratch
+*.local.yml
