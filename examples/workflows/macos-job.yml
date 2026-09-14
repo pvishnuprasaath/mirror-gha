@@ -1,0 +1,20 @@
+# Demonstrates runs-on: macos-latest — executed directly on the host
+# process (no container, no Docker at all), since macOS can't be
+# virtualized or containerized on non-Apple hardware. Only runs for real
+# when mirror-gha itself is running on a Mac; otherwise a clear error
+# names the limitation.
+#
+# Try it:
+#   mirror run examples/workflows/macos-job.yml
+name: macos job
+on: push
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: real host shell step
+        run: echo "running natively on $(uname -s)"
+      - name: real js action
+        uses: actions/hello-world-javascript-action@v1
+        with:
+          who-to-greet: mirror-gha

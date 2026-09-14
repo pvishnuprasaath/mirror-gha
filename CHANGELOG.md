@@ -9,6 +9,31 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **`runs-on: macos-latest`/`macos-13`/`macos-14`/`macos-15` (macOS host
+  backend).** Checked against act's own host-execution mode
+  (`pkg/container/host_environment.go`, `pkg/runner/run_context.go`)
+  rather than guessed — though act's version is a generic, undocumented
+  `-P label=-self-hosted` escape hatch with no macOS awareness at all,
+  and it still silently requires Docker for a `uses: docker://...` step
+  even in that mode. mirror-gha's macOS backend is a real, first-class
+  backend: no container at all, real `os/exec` directly on the host,
+  gated on `runtime.GOOS == "darwin"` (any other host OS gets a clear
+  error, not a silent wrong attempt — cross-host macOS execution isn't
+  possible, matching this project's documented hard constraint that
+  macOS can't be virtualized on non-Apple hardware). `container:`,
+  `services:`, and Docker-action steps all error clearly here, matching
+  real GitHub Actions' own documented Linux-only constraint for those
+  features. Required a real bug-shaped fix along the way: the pinned
+  Node.js runtime downloader hardcoded `linux` in its download URL,
+  correct only because the existing Docker backend always targets a
+  Linux container regardless of what OS mirror-gha's own process runs on
+  (this project is routinely developed on a Mac already) — naively
+  switching that to the host OS would have broken the *existing* Docker
+  backend on exactly this kind of machine. Fixed by adding `Job.Platform()`
+  so each backend reports its own actual execution OS explicitly. Verified
+  for real on this machine: a `runs-on: macos-latest` job running a plain
+  shell step and a real, unmodified JS action, with no Docker process
+  involved anywhere in the path.
 - **`container:` and `services:` job fields.** Checked against act's own
   implementation (`pkg/model/workflow.go`'s `Job.Container()`/
   `ContainerSpec`, `pkg/runner/run_context.go`'s `startJobContainer`/

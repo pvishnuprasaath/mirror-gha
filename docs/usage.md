@@ -166,6 +166,20 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   `mirror run` pulling different private images concurrently could
   race — acceptable for a local single-workflow-run tool, not solved in
   v1.
+- **`runs-on: macos-latest`/`macos-13`/`macos-14`/`macos-15`** — executes
+  directly on the host process, no container at all, since macOS cannot
+  be virtualized or containerized on non-Apple hardware. Only works when
+  mirror-gha itself is running on a Mac — from any other host OS this
+  returns a clear, specific error rather than a silent wrong attempt.
+  `container:`, `services:`, and `uses: docker://...`/Docker-action steps
+  all error clearly on macOS jobs, matching real GitHub Actions' own
+  documented Linux-only constraint for these features. The default shell
+  for a `run:` step with no `shell:` is `bash` here (matching real GitHub
+  Actions' own default for macOS runners), not `sh` (the Docker backend's
+  default). Job steps inherit mirror-gha's own real host environment
+  (`PATH`, `HOME`, etc.) — unlike the Docker backend's clean-container
+  environment — matching how a real self-hosted/macOS runner operates as
+  the logged-in user.
 - **`timeout-minutes`** at both job and step level.
 - **`defaults.run.shell` / `defaults.run.working-directory`** at workflow
   and job level, with the real GitHub Actions precedence: step overrides
@@ -219,8 +233,8 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Windows and macOS runners (`windows-latest`, `macos-latest`) — these
-  return a clear error naming the limitation, not a silent wrong result
+- Windows runners (`windows-latest`) — this returns a clear error naming
+  the limitation, not a silent wrong result
 - A dashboard UI
 
 None of these fail silently — an unsupported `runs-on` value or a
