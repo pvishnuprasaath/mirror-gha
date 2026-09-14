@@ -31,3 +31,9 @@ Thumbs.db
 
 # Created at the repo root by running examples/workflows/workspace.yml
 .workspace-demo-output.txt
+
+# Created at the repo root by running examples/workflows/uses-docker-image.yml
+marker.txt
+
+# Created at the repo root by running examples/workflows/uses-cache.yml
+cache-data/

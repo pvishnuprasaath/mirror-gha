@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"mirror-gha/internal/commands"
@@ -158,6 +159,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			env["STATE_"+k] = v
 		}
 		env["GITHUB_WORKSPACE"] = runnerJob.WorkspacePath()
+		exportGitHubContextEnv(env, actx)
 
 		postFilesDir, err := os.MkdirTemp(runnerJob.FilesRoot(), "post-")
 		if err != nil {
@@ -303,7 +305,7 @@ func runStep(ctx context.Context, p runStepParams, actx *Context, step Step, id 
 		env[k] = v
 	}
 	env["GITHUB_WORKSPACE"] = p.RunnerJob.WorkspacePath()
-	env["GITHUB_STATE"] = fileSet.StateFile
+	exportGitHubContextEnv(env, actx)
 	for k, v := range plan.Env {
 		env[k] = v
 	}
@@ -385,6 +387,21 @@ func runStep(ctx context.Context, p runStepParams, actx *Context, step Step, id 
 		Stdout:     stepResult.Stdout,
 		Stderr:     stepResult.Stderr,
 	}, pending, nil
+}
+
+// exportGitHubContextEnv sets every string-valued github.* context entry
+// as a real GITHUB_* env var too, not just inside ${{ }} expressions —
+// matching real GitHub Actions' own behavior. Found missing via genuine
+// end-to-end testing: actions/cache@v4's real save logic gates on
+// process.env.GITHUB_REF existing at all (isValidEvent() in its bundled
+// dist/save/index.js), which silently no-ops the entire save with only a
+// warning if it's missing.
+func exportGitHubContextEnv(env map[string]string, actx *Context) {
+	for k, v := range actx.GitHub {
+		if s, ok := v.(string); ok {
+			env["GITHUB_"+strings.ToUpper(k)] = s
+		}
+	}
 }
 
 func effectiveShell(step Step, job *Job, wf *Workflow) string {

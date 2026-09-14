@@ -493,3 +493,25 @@ func TestRunJob_PostActionRunsAfterMainStepsWithState(t *testing.T) {
 		t.Errorf("post Args = %v, want %v", postSpec.Args, wantArgs)
 	}
 }
+
+func TestRunJob_ExportsGitHubContextAsEnvVars(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo one"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	spec := backend.lastJob.execSpecs[0]
+	if spec.Env["GITHUB_REF"] == "" {
+		t.Error(`Env["GITHUB_REF"] is empty, want a real value (actions/cache@v4's isValidEvent() gates on this existing at all)`)
+	}
+	if spec.Env["GITHUB_EVENT_NAME"] == "" {
+		t.Error(`Env["GITHUB_EVENT_NAME"] is empty, want a real value`)
+	}
+}

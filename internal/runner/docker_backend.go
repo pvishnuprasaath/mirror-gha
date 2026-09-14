@@ -127,6 +127,7 @@ func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 		"-e", "GITHUB_PATH="+containerFilesDir+"/github_path",
 		"-e", "GITHUB_OUTPUT="+containerFilesDir+"/github_output",
 		"-e", "GITHUB_STEP_SUMMARY="+containerFilesDir+"/github_step_summary",
+		"-e", "GITHUB_STATE="+containerFilesDir+"/github_state",
 		j.containerID,
 	)
 
@@ -182,6 +183,7 @@ func (j *dockerJob) RunDockerAction(ctx context.Context, spec DockerActionSpec) 
 		"-e", "GITHUB_PATH=" + containerFilesMount + "/github_path",
 		"-e", "GITHUB_OUTPUT=" + containerFilesMount + "/github_output",
 		"-e", "GITHUB_STEP_SUMMARY=" + containerFilesMount + "/github_step_summary",
+		"-e", "GITHUB_STATE=" + containerFilesMount + "/github_state",
 	}
 	if spec.ActionSourceDir != "" {
 		args = append(args, "-v", spec.ActionSourceDir+":"+spec.ActionPathInContainer+":ro")
