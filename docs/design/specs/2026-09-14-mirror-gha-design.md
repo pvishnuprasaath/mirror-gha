@@ -847,6 +847,103 @@ hostname, and a `container: node:20` workflow running a step that
 depends on that image's toolchain not being present in the default
 `ubuntu:22.04` image (proving the swap is real, not a no-op).
 
+## macOS Host Backend
+
+**Scope:** `runs-on: macos-latest`/`macos-13`/`macos-14`/`macos-15`,
+executing directly on the host process with no container at all — the
+only architecturally honest option, since macOS cannot be virtualized or
+containerized on non-Apple hardware (see "Hard technical constraint"
+above). Checked against act's own host-execution mode
+(`pkg/container/host_environment.go`, `pkg/runner/run_context.go`) per
+the standing direction to treat it as the reference implementation,
+though act's version is a generic, undocumented `-P
+label=-self-hosted` escape hatch with no macOS awareness at all — this
+sub-project gives mirror-gha a real, first-class macOS backend act
+doesn't have.
+
+**Backend selection gates on the actual host OS, not just the
+label.** `runner.SelectBackend` maps the macOS `runs-on` labels to a new
+`HostBackend` only when `runtime.GOOS == "darwin"`; on any other host OS
+it returns a clear, specific error ("macOS jobs require running
+mirror-gha on a Mac host") rather than attempting anything — matching
+the spec's pre-existing hard constraint rather than act's silent
+generic bypass, which has no OS check at all.
+
+**No container, no bind mount — real `os/exec` directly on the host,
+matching act's `HostEnvironment.exec`.** `HostJob.WorkspacePath()`
+returns the real workspace directory unchanged (there is nothing to
+mount into); `FilesRoot()` is a real host temp directory, and the
+`GITHUB_ENV`/`OUTPUT`/`PATH`/`STEP_SUMMARY`/`STATE` workflow-command
+files live at literal paths under it — no `/mirror-files`-style
+container-path translation is needed for these at all, since there is
+no container-side/host-side split left to bridge.
+
+**One real translation problem: the `/mirror-node`/`/mirror-actions/<id>`
+convention.** These are synthetic absolute paths the engine layer
+(`internal/actions`) already bakes into `uses_step.go`'s JS-action
+`Args`/`GITHUB_ACTION_PATH`, and into `Job.CopyToContainer`'s destination
+argument — meaningful today only because the Docker backend bind-mounts
+them inside an isolated container filesystem namespace. A bare host
+process has no such namespace: writing to the literal path `/mirror-node`
+on a real Mac would need root and would collide across concurrent or
+repeated runs. `HostJob` keeps its own per-job real root directory and
+rewrites any `/mirror-*`-prefixed path — `CopyToContainer`'s destination,
+each JS-action `Args` entry, the `GITHUB_ACTION_PATH` env value — to
+`filepath.Join(root, thatPath)` before executing, mirroring act's own
+`ToContainerPath`-style host-path translation, scoped to the one path
+family this codebase already uses for this purpose. Nothing else in a
+step's `Args`/`Env`/`Command` is touched — this rewrite only ever applies
+to strings this project itself generates with that exact prefix, never
+to workflow-author-controlled content.
+
+**Node runtime download must target the backend's platform, not
+mirror-gha's own host OS — a real bug the naive fix would introduce.**
+`internal/actions/node.go`'s `EnsureNode` currently hardcodes `linux` in
+its download URL; that's correct today only because the Docker backend
+always targets a Linux container regardless of what OS mirror-gha itself
+is running on (this very project is developed and tested on a Mac
+already, running Linux job containers). Naively switching that hardcode
+to `runtime.GOOS` would break the *existing*, already-shipped Docker
+backend on exactly this kind of Mac dev machine — it would fetch a
+`darwin` Node binary and `docker cp` it into a Linux container. Fix: add
+`Platform() string` to the `runner.Job` interface (`dockerJob` always
+returns `"linux"`, matching its fixed container target regardless of
+host; the new `hostJob` returns `"darwin"`), thread that value into
+`EnsureNode(cacheRoot, platform)`, and add a `darwin` branch to its URL
+construction (`https://nodejs.org/dist/v<ver>/node-v<ver>-darwin-<arch>.tar.gz`
+— Node.js publishes real darwin tarballs with the identical internal
+`bin/node` layout as the linux ones already handled).
+
+**Scope cuts — all matching real GitHub Actions' own documented
+constraints, not limitations mirror-gha is inventing.** `uses:
+docker://...` steps, `container:`, and `services:` all hard-error clearly
+on `HostBackend`: real GitHub Actions itself doesn't support Docker
+container actions or container/service jobs on macOS runners either
+(a documented upstream constraint, not something Linux-only about this
+project specifically) — matching reality is more correct here than act's
+own behavior, which silently still requires Docker for a `uses:
+docker://...` step even inside its generic host-execution mode. Cross-host
+macOS (requesting `macos-latest` from a non-Mac host) stays the
+already-documented hard limitation from this spec's "Hard technical
+constraint" section — a real Mac (or licensed VM) the user provisions,
+not something this tool can wave away.
+
+**Shell default divergence, worth flagging explicitly.** The Docker
+backend defaults a `run:` step with no `shell:` to `sh` (a bare
+`ubuntu:22.04` image's lowest common denominator). Real GitHub Actions'
+own documented default for both Linux and macOS runners is `bash`, and
+every real macOS ships one at a fixed path — `HostJob.Exec` defaults to
+`bash` instead of `sh`, a divergence scoped to this backend only,
+correcting toward real GitHub Actions behavior rather than introducing a
+new inconsistency.
+
+**Testing:** unit tests for the `/mirror-*` path-rewrite helper and
+`Job.Platform()` across both backends. Real end-to-end verification on
+this machine (the only place it's possible to verify for real, since
+macOS execution requires an actual Mac host) — a `runs-on: macos-latest`
+workflow running a plain `run:` step and a real JS action, proving Node
+actually executes natively with no Docker involved anywhere in the path.
+
 ## Data flow
 
 ```
