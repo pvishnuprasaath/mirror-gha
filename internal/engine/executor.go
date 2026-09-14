@@ -75,6 +75,10 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			id = fmt.Sprintf("step-%d", i)
 		}
 
+		if step.Run != "" && step.Uses != "" {
+			return nil, fmt.Errorf("step %s: cannot set both run: and uses:", id)
+		}
+
 		if step.If != "" {
 			ok, err := EvalBool(step.If, actx)
 			if err != nil {

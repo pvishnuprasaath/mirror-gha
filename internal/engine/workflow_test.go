@@ -113,6 +113,33 @@ jobs:
 	}
 }
 
+func TestParse_UsesAndWith(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: owner/repo@v1
+        with:
+          who-to-greet: World
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	step := wf.Jobs["build"].Steps[0]
+	if step.Uses != "owner/repo@v1" {
+		t.Errorf("Uses = %q, want %q", step.Uses, "owner/repo@v1")
+	}
+	if step.With["who-to-greet"] != "World" {
+		t.Errorf(`With["who-to-greet"] = %q, want %q`, step.With["who-to-greet"], "World")
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty

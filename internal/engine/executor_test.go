@@ -139,6 +139,20 @@ func TestRunJob_IfConditionSkipsStep(t *testing.T) {
 	}
 }
 
+func TestRunJob_RejectsStepWithBothRunAndUses(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo hi", Uses: "owner/repo@v1"}},
+	}
+	backend := &fakeBackend{}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("RunJob() error = nil, want error for a step with both run: and uses:")
+	}
+}
+
 func TestEffectiveShell_PrecedenceStepThenJobThenWorkflow(t *testing.T) {
 	wf := &Workflow{Defaults: &Defaults{Run: RunDefaults{Shell: "sh"}}}
 	job := &Job{Defaults: &Defaults{Run: RunDefaults{Shell: "bash"}}}

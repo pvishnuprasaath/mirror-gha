@@ -36,6 +36,8 @@ type Step struct {
 	ID               string            `yaml:"id"`
 	Name             string            `yaml:"name"`
 	Run              string            `yaml:"run"`
+	Uses             string            `yaml:"uses"`
+	With             map[string]string `yaml:"with"`
 	Shell            string            `yaml:"shell"`
 	Env              map[string]string `yaml:"env"`
 	If               string            `yaml:"if"`
