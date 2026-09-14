@@ -722,6 +722,131 @@ inferred from act's own server-side routes), so this needs the same
 "verify for real, fix what's found" discipline that caught three real
 bugs during Cache Runtime's own end-to-end verification.
 
+## Services and Container Runtime
+
+**Scope:** job-level `container:` (swap the image the job's own container
+runs as) and `services:` (sidecar containers reachable from job steps by
+name), including registry `credentials:` for both. Every design decision
+below was checked against act's actual source (`nektos/act`,
+`pkg/model/workflow.go`, `pkg/runner/run_context.go`,
+`pkg/container/docker_network.go`), per the standing direction to treat
+it as the reference implementation.
+
+**No separate "runner" container — act doesn't have one either.** A
+common misconception: `container:` doesn't add a sidecar alongside some
+fixed management container. act runs exactly one container per job
+(`startJobContainer`); `container:` just changes which image that single
+container uses (`platformImage()` reads `job.Container().Image` before
+falling back to the `runs-on` default). mirror-gha mirrors this exactly:
+`LinuxDockerBackend.StartJob` swaps `linuxRunnerImage` for
+`containerSpec.Image` when non-empty, nothing else about job execution
+changes.
+
+**Model** — `internal/engine/workflow.go`: `Job` gains
+`RawContainer yaml.Node` (tag `container`) and
+`Services map[string]ContainerSpec` (tag `services`), plus a
+`Job.Container() (*ContainerSpec, error)` method decoding either shape
+GitHub Actions allows — a bare image string (`container: node:20`) or a
+mapping (`container: {image: ..., env: ..., ...}`) — matching act's own
+`yaml.Node`-kind-switch in its `Container()` method. `ContainerSpec{Image
+string; Env map[string]string; Ports, Volumes []string; Options string;
+Credentials map[string]string}` is reused for both `container:` and each
+`services:` entry, matching act's own struct reuse.
+
+**Networking — a per-job Docker network, only when `services:` is
+present.** Docker's embedded DNS only resolves `--network-alias` names on
+a user-defined network, never the default bridge — so whenever a job
+declares `services:`, mirror-gha creates `docker network create
+mirror-svc-<jobID>` before starting anything, attaches the job container
+to it with `--network mirror-svc-<jobID>`, and attaches each service
+container with `--network mirror-svc-<jobID> --network-alias <name>`.
+Jobs with no `services:` are completely unaffected — no network is
+created, the job container keeps using Docker's default network exactly
+as it does today. `RunDockerAction`'s existing `--network
+container:<jobContainerID>` (joining the job container's network
+namespace for Docker-action steps) needs no change: it inherits whatever
+network the job container is already on, custom or default. Confirmed
+this matches act's own model (`networkName()` in `run_context.go`
+computes the same conditional network-or-default logic; the actual
+`docker network create` call is act's `pkg/container/docker_network.go`,
+idempotent against an existing network of the same name).
+`host.docker.internal` (needed for the cache/artifact servers) is
+expected to keep resolving on a custom bridge network under Docker
+Desktop — verified for real during this sub-project's own end-to-end
+task, not assumed.
+
+**Service startup and health wait.** Each service starts via `docker run
+-d` with its own `-e`/`-p`/`-v` flags from `Env`/`Ports`/`Volumes`, plus
+any `Options` tokens appended raw. After starting, mirror-gha polls
+`docker inspect --format '{{.State.Health.Status}}'`: empty output (no
+`HEALTHCHECK` defined on the image, and no `--health-cmd` supplied via
+`Options`) means ready immediately; `"healthy"` means ready; anything
+else polls up to 5 minutes (matching act's own `waitForServiceContainers`
+timeout) before erroring. Services start once per job, before the job
+container's steps run, and are torn down once per job — never per step.
+
+**Registry credentials — `docker login`/`docker logout` around the pull,
+since mirror-gha shells to the `docker` CLI rather than using act's
+Docker Go SDK.** act validates `Credentials` as exactly two keys
+(`username`, `password`), interpolates both as expressions, and feeds
+them to the Docker SDK's `RegistryAuth` before pulling
+(`pkg/runner/run_context.go`'s `handleCredentials`/
+`handleServiceCredentials` -> `getImagePullOptions`). mirror-gha
+replicates the validation (exactly `username`+`password`, error
+otherwise) but the mechanism is necessarily different: `docker login
+<registry> -u <username> --password-stdin` (password piped via stdin,
+never `-p`, so it never appears in argv or shell history) runs once
+before that image's first pull/run, and `docker logout <registry>` runs
+during `dockerJob.Stop`. The registry host is parsed from the image
+reference, defaulting to Docker Hub (`index.docker.io`) when the
+reference has no dot, colon, or `localhost` prefix — matching act's own
+default-registry heuristic. Same mechanism for `container:` and every
+`services:` entry; act's legacy `DOCKER_USERNAME`/`DOCKER_PASSWORD`
+secrets fallback (marked TODO-remove in act's own source) is not
+replicated. **Known v1 limitation, documented rather than silently
+wrong:** login/logout is process-wide (shared Docker daemon config, since
+mirror-gha has no isolated per-job credential store the way the SDK's
+in-memory `RegistryAuth` gives act) — two jobs in the same `mirror run`
+pulling different private images concurrently could race. Acceptable for
+a local single-workflow-run tool; flagged in `docs/usage.md`, not solved
+in v1.
+
+**`Options` needs quote-aware tokenizing.** Real-world values like
+`--health-cmd "pg_isready -U postgres"` contain spaces inside quotes, so
+a naive `strings.Fields` split would break the most common real use case
+(Postgres/MySQL health checks). A small hand-rolled tokenizer (single-
+and double-quote aware, no shell expansion, no external dependency) is
+added rather than reaching for a shlex-style package — keeps the
+project's zero-external-Go-dependency record intact, and the feature
+surface (whitespace + quoted substrings) is small enough that a
+hand-rolled scanner is genuinely simpler than a dependency would be.
+
+**Backend/Job interface change.** `runner.Backend.StartJob` gains two
+parameters: `containerSpec *ContainerSpec` and `services
+map[string]ContainerSpec` (a new `runner.ContainerSpec` type, mirroring
+the engine one but decoupled the same way `DockerActionSpec` already is —
+the engine converts its own type to the runner's at the call site). Both
+are nil/empty for every job without `container:`/`services:` — the
+overwhelming majority of existing and future workflows — so every
+existing test and call site updates mechanically, no behavior change for
+the common case.
+
+**Job-container-level `env`/`ports`/`volumes`/`options`.** `container.Env`
+merges into `actx.Env` alongside `job.Env` (container wins on conflict —
+a rare edge case, but the more specific scope should win, matching how
+step-level settings already override job-level ones elsewhere in this
+codebase). `container.Volumes`/`Ports`/`Options` become extra `-v`/`-p`/raw
+args on the `docker run` that starts the job container itself.
+
+**Testing:** unit tests for `Job.Container()` parsing (both shapes,
+malformed input), the credentials validator, and the `Options` tokenizer
+(plain tokens, quoted substrings with embedded spaces, mixed). Real
+end-to-end verification: a `services: postgres` workflow doing a real
+`pg_isready`/`psql` round trip from a step against the service by
+hostname, and a `container: node:20` workflow running a step that
+depends on that image's toolchain not being present in the default
+`ubuntu:22.04` image (proving the swap is real, not a no-op).
+
 ## Data flow
 
 ```
