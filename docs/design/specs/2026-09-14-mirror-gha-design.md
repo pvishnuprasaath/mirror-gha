@@ -20,7 +20,7 @@ has meaningfully closed these gaps in 6+ years.
 An exact local replica of the GitHub Actions execution environment — full
 workflow syntax, full contexts/expressions, all three action types (JS,
 Docker, composite), real artifact/cache semantics, and (eventually) real
-runner-OS mirror for Linux, Windows, and macOS — built from scratch, not
+runner-OS parity for Linux, Windows, and macOS — built from scratch, not
 layered on `act`.
 
 ## Non-goals (explicitly out of scope)
@@ -84,7 +84,7 @@ execution path):
    same run-state the CLI produces (live log streaming, run history, job
    graph). No separate process, no Electron/native-window layer — same
    binary, a `dashboard` subcommand. `mirror run` alone is always
-   full-mirror and scriptable, independent of whether the dashboard is open.
+   full-parity and scriptable, independent of whether the dashboard is open.
 
 ## Data flow
 
@@ -113,7 +113,7 @@ Artifacts/cache are real local filesystem stores keyed the same way
 `actions/upload-artifact` and `actions/cache` key theirs (name + path +
 hash), so those actions work unmodified against the shim.
 
-## Phased feature-mirror matrix
+## Phased feature-parity matrix
 
 ### Phase 1 (v1) — Linux backend, full breadth elsewhere
 
