@@ -108,6 +108,53 @@ runs:
 	}
 }
 
+func TestParseMetadata_CompositeRuns(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "action.yml", `
+name: 'Composite Action'
+inputs:
+  who-to-greet:
+    default: 'World'
+outputs:
+  greeting:
+    description: 'the greeting'
+    value: '${{ steps.greet.outputs.greeting }}'
+runs:
+  using: 'composite'
+  steps:
+    - id: greet
+      run: 'echo "greeting=Hello, ${{ inputs.who-to-greet }}!" >> "$GITHUB_OUTPUT"'
+      shell: 'sh'
+    - uses: './some/nested-action'
+      with:
+        key: 'value'
+`)
+
+	meta, err := ParseMetadata(dir)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if meta.Runs.Using != "composite" {
+		t.Errorf("Runs.Using = %q, want composite", meta.Runs.Using)
+	}
+	if len(meta.Runs.Steps) != 2 {
+		t.Fatalf("Runs.Steps = %d entries, want 2", len(meta.Runs.Steps))
+	}
+	if meta.Runs.Steps[0].ID != "greet" || meta.Runs.Steps[0].Shell != "sh" {
+		t.Errorf("Runs.Steps[0] = %+v, want ID=greet Shell=sh", meta.Runs.Steps[0])
+	}
+	if meta.Runs.Steps[1].Uses != "./some/nested-action" || meta.Runs.Steps[1].With["key"] != "value" {
+		t.Errorf("Runs.Steps[1] = %+v, want Uses=./some/nested-action With[key]=value", meta.Runs.Steps[1])
+	}
+	output, ok := meta.Outputs["greeting"]
+	if !ok {
+		t.Fatal(`Outputs["greeting"] not found`)
+	}
+	if output.Value != "${{ steps.greet.outputs.greeting }}" {
+		t.Errorf("Outputs[greeting].Value = %q, want %q", output.Value, "${{ steps.greet.outputs.greeting }}")
+	}
+}
+
 func TestParseMetadata_MissingFileIsError(t *testing.T) {
 	_, err := ParseMetadata(t.TempDir())
 	if err == nil {
