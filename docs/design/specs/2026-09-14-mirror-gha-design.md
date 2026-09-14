@@ -219,6 +219,138 @@ Outputs and env updates need **zero** new plumbing: JS actions write via
 steps in real GitHub Actions either — `uses:` steps always execute
 against the job workspace, no override.
 
+## Docker Actions Runtime
+
+**Scope:** `uses:` resolving to a Docker action (`runs.using: docker`) —
+a raw `docker://image:tag` reference, or a Marketplace/local action
+whose `runs.image` names a Dockerfile shipped alongside its
+`action.yml`. Composite actions remain a separate, still-unscheduled
+follow-up — a non-Docker, non-JS `runs.using` is still rejected with a
+clear error.
+
+Every design decision below was checked against act's actual source
+(`nektos/act`, cloned fresh for this sub-project), per the same
+standing direction as the JS Actions Runtime work.
+
+**Architectural fit — a separate sibling container, not `docker exec`
+into the job container.** This was the open question this sub-project
+most needed act's source to answer, since it's the one place Docker
+actions can't reuse the JS-action pattern (copy a binary in, exec it in
+the job's own container) — a Docker action's image is frequently a
+completely different base OS than the job's own `ubuntu:22.04`.
+Confirmed directly in act's source: `pkg/runner/step_docker.go`'s
+`runUsesContainer` (raw `docker://` steps) and `pkg/runner/action.go`'s
+`execAsDocker` (local/Marketplace Docker actions) both build a fresh
+`container.NewContainerInput` and run `Pull -> Remove(if !reuse) ->
+Create -> Start(true)`, blocking until the container exits, then
+`Remove` in `Finally()` — functionally `docker run --rm <image>` and
+wait, once per step. This is a genuine divergence from JS actions
+(`action.go`'s `rc.execJobContainer(...)` execs *inside* the existing
+job container) that exists in act's own code too, not something
+mirror-gha is introducing — confirming the sibling-container model is
+the correct fit, not a compromise.
+
+**Image resolution:**
+- `docker://image:tag` is used directly, with no explicit pull step —
+  `docker run` already auto-pulls a missing image on demand, so
+  mirror-gha skips the explicit `Pull()` step act's code has for this
+  case (act's own `ForcePull` config flag has no mirror-gha equivalent
+  yet either — YAGNI until a real need for it shows up).
+- A local/Marketplace action whose `runs.image` names a Dockerfile
+  (typically the literal string `Dockerfile`, resolved relative to the
+  action's own source directory — never the job workspace) is built via
+  `docker build`. Tagged `mirror-gha-<sanitized-action-ref>:latest`,
+  where sanitizing replaces every non-alphanumeric character with `-` —
+  matches act's own tagging scheme in `action.go` (`act-<sanitized>-
+  dockeraction:latest`) closely enough to keep the same debuggability
+  (`docker images` shows which local image belongs to which action)
+  without literally reusing act's `act-` prefix.
+- Cache check via `docker image inspect <tag>` before rebuilding — a
+  hit skips the build entirely. No arch-mismatch detection (act's
+  version checks this because it supports multiple runner
+  architectures; mirror-gha's single Linux Docker backend doesn't need
+  it yet) and no `ForceRebuild` flag (YAGNI, same reasoning as
+  `ForcePull` above).
+
+**Container invocation:**
+- `runs.entrypoint`/`runs.args` from `action.yml`, overridable by
+  `with: {entrypoint, args}` exactly like act (`step.With["entrypoint"]`
+  / `step.With["args"]` win when set) — `args` gets `${{ }}` expression
+  substitution first, same as every other `with:` value.
+- `with:` inputs become `INPUT_*` env vars via the **same transform**
+  already implemented for JS actions (`internal/actions.InputEnv` is
+  generic over `runs.using` already — confirmed against act's
+  `populateEnvsFromInput`, which uses the identical transform
+  regardless of action type). No new input-mapping code needed here.
+  act's Dockerfile-specific extra step, `evalDockerArgs` (which also
+  injects raw unprefixed input keys plus `runs.env` for
+  `${{ inputs.x }}`-style Dockerfile `ARG`/`ENV` substitution), isn't
+  replicated — no evidence any real action needs it beyond act's own
+  Dockerfile-templating convenience, and it would be new surface area
+  with no current caller.
+- `runs.env` (action-level static env vars) merged in alongside
+  `INPUT_*` and `GITHUB_*`.
+
+**Mounts and networking** (`dockerJob.RunDockerAction`, new method):
+- The job's own workspace directory, bind-mounted read-write at
+  `/github/workspace` — same host path as the job container's own
+  mount, so a Docker action sees exactly the same files a `run:` step
+  would. Requires `dockerJob` to start storing `hostWorkspaceDir` (not
+  currently kept — `StartJob` only threads it through to the initial
+  `docker run`, this sub-project is the first caller that needs it
+  again afterward).
+- The action's own source directory, bind-mounted read-only at
+  `/mirror-actions/<step-id>` (same path convention as JS actions) —
+  set as `GITHUB_ACTION_PATH`. A direct bind mount, not `docker cp`,
+  since this container is created fresh for this one step and never
+  reused — no need to inject into an already-running container the way
+  JS actions inject into the long-lived job container.
+- This step's `FilesDir`, bind-mounted at `/mirror-files`, with
+  `GITHUB_ENV`/`GITHUB_PATH`/`GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
+  pointed at files under it — same file-based workflow-command protocol
+  every other step type already uses, so output/env-file parsing in
+  `RunJob` needs zero changes.
+- `--network container:<jobContainerID>`, so a Docker action can reach
+  `localhost` the same way a `run:` step in the job container can —
+  matches act's `NetworkMode` exactly
+  (`fmt.Sprintf("container:%s", rc.jobContainerName())` in
+  `run_context.go`).
+- `/var/run/docker.sock` bind-mounted in unconditionally, matching
+  act's and real GitHub-hosted runners' own behavior (confirmed: act
+  does this for every Docker action, no opt-in gate in its source).
+  **This is a real, explicit trust decision, not an oversight**: any
+  Docker action — including an unmodified Marketplace one — gets full
+  host Docker daemon control the moment it runs, matching what real
+  GitHub Actions runners already do. Documented in `docs/usage.md` as a
+  trust caveat, not silently shipped.
+
+**Interface shape:** `runner.Job` gains `RunDockerAction(ctx,
+DockerActionSpec) (StepResult, error)`, alongside the existing
+`CopyToContainer`/`Exec` methods — deliberately not folded into `Exec`,
+since a Docker action needs its own image/network/mount set rather than
+argv into the already-running job container. `DockerActionSpec` carries
+`{Image, Entrypoint, Args, Env, ActionSourceDir,
+ActionPathInContainer, FilesDir}`. `dryRunJob.RunDockerAction` is a
+no-op fake success, matching `dryRunJob.CopyToContainer`'s existing
+pattern — dry-run mode never touches Docker at all for any step type.
+
+`internal/engine/uses_step.go`'s `prepareUsesStep` now dispatches on
+`metadata.Runs.Using`: a `node*` prefix keeps today's argv-into-job-
+container path unchanged; `docker` resolves/builds the image and
+returns a `DockerActionSpec` instead of argv; anything else is still
+rejected. `RunJob`'s step loop branches once on which of the two came
+back and calls `Exec` or `RunDockerAction` accordingly — everything
+downstream (output-file parsing, legacy stdout-output parsing, the
+`GITHUB_ENV` merge) stays exactly as it is today, since none of it
+cares how a step actually ran.
+
+**Platform scope:** Linux Docker daemon only, consistent with
+mirror-gha's current single backend — checked act's source for
+Docker-action-specific platform gating and found none beyond requiring
+a working Docker daemon at all (its own OS-specific build tags gate the
+whole container package, not Docker actions in particular). No new
+restriction needed beyond what already exists.
+
 ## Data flow
 
 ```
