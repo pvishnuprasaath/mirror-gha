@@ -40,21 +40,26 @@ match what GoReleaser injects automatically.
       real (non-prerelease) GitHub Release exists. Smoke-test it against
       the first real release: `curl -fsSL .../install.sh | sh`.
 
-## Homebrew tap (currently disabled)
+## Homebrew tap
 
-`.goreleaser.yaml`'s `homebrew_casks` section is fully configured but
-`skip_upload: true` — GoReleaser would otherwise try to push a cask to
-`pvishnuprasaath/homebrew-tap`, which doesn't exist yet. To turn it on:
+`.goreleaser.yaml`'s `homebrew_casks` section is fully configured and
+upload is enabled (as of 2026-09-14) — but two one-time manual
+prerequisites still need doing before the *next* tag push, or the
+release workflow's Homebrew step will fail (the GitHub Release and
+binaries still publish fine either way — that step runs first and is
+independent):
 
 1. Create the `pvishnuprasaath/homebrew-tap` repository (empty is fine —
    GoReleaser creates the `Casks/` directory and commits the formula
-   file itself).
+   file itself). **Not done yet as of 2026-09-14.**
 2. Create a GitHub personal access token with write access to that repo,
    add it as a repository secret named `TAP_GITHUB_TOKEN` on
-   `mirror-gha` (Settings → Secrets and variables → Actions).
-3. Set `skip_upload: false` in `.goreleaser.yaml`.
-4. Cut the next release as normal. Users can then run
-   `brew install --cask pvishnuprasaath/tap/mirror-gha`.
+   `mirror-gha` (Settings → Secrets and variables → Actions). **Not done
+   yet as of 2026-09-14.**
+
+Once both exist, the next tagged release publishes the cask
+automatically, and users can run
+`brew install --cask pvishnuprasaath/tap/mirror-gha`.
 
 Note: this project deliberately uses `homebrew_casks`, not the legacy
 `brews` (Formula) section — `brews` was fully deprecated in GoReleaser

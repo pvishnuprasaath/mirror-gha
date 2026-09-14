@@ -57,10 +57,14 @@ release:
     name: mirror-gha
   prerelease: auto
 
-# Homebrew tap publishing — off until the pvishnuprasaath/homebrew-tap
-# repo actually exists (GoReleaser will fail trying to push a cask to a
-# repo that isn't there yet). Create that repo, then set
-# skip_upload: false. See docs/RELEASING.md.
+# Homebrew tap publishing. REQUIRES, before the next tag is pushed:
+#   1. The pvishnuprasaath/homebrew-tap repo to exist (can be empty —
+#      GoReleaser creates Casks/ and commits the formula itself).
+#   2. A repo secret named TAP_GITHUB_TOKEN on mirror-gha, holding a PAT
+#      with write access to homebrew-tap.
+# Without both, the release workflow's Homebrew step will fail (even
+# though the GitHub Release/binaries step, which runs first, still
+# succeeds). See docs/RELEASING.md for the exact steps.
 #
 # Uses homebrew_casks, not the legacy brews section — brews (Formula)
 # was fully deprecated in GoReleaser v2.16 in favor of casks for
@@ -72,7 +76,6 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     directory: Casks
-    skip_upload: true
     binaries:
       - mirror
     homepage: "https://github.com/pvishnuprasaath/mirror-gha"
