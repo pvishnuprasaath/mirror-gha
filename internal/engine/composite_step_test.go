@@ -31,7 +31,7 @@ func TestRunCompositeSteps_NestedOutputBridgesToParent(t *testing.T) {
 		BaseEnv: map[string]string{},
 	}
 
-	conclusion, outputs, err := runCompositeSteps(context.Background(), p, parentActx, comp)
+	conclusion, outputs, _, _, err := runCompositeSteps(context.Background(), p, parentActx, comp)
 	if err != nil {
 		t.Fatalf("runCompositeSteps() error = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestRunCompositeSteps_ExceedsMaxDepth(t *testing.T) {
 	parentActx := NewContext(&Workflow{}, &Job{})
 	comp := &compositeInvocation{}
 
-	_, _, err := runCompositeSteps(context.Background(), p, parentActx, comp)
+	_, _, _, _, err := runCompositeSteps(context.Background(), p, parentActx, comp)
 	if err == nil {
 		t.Fatal("runCompositeSteps() error = nil, want error for exceeding max nesting depth")
 	}

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"mirror-gha/internal/actions"
 )
@@ -41,9 +42,9 @@ const maxCompositeDepth = 10
 // for empty synthetic values here) — matches act's finding that a
 // composite's synthetic RunContext has an empty Job(), so its Defaults
 // always resolve empty.
-func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context, comp *compositeInvocation) (string, map[string]string, error) {
+func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context, comp *compositeInvocation) (conclusion string, outputs map[string]string, stdout string, stderr string, err error) {
 	if p.Depth+1 > maxCompositeDepth {
-		return "", nil, fmt.Errorf("exceeded max composite action nesting depth (%d) — likely a self-referencing action", maxCompositeDepth)
+		return "", nil, "", "", fmt.Errorf("exceeded max composite action nesting depth (%d) — likely a self-referencing action", maxCompositeDepth)
 	}
 
 	childActx := &Context{
@@ -72,7 +73,8 @@ func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context
 		Depth:                    p.Depth + 1,
 	}
 
-	conclusion := "success"
+	conclusion = "success"
+	var stdoutBuilder, stderrBuilder strings.Builder
 	for i, nestedStep := range comp.Steps {
 		nestedID := nestedStep.ID
 		if nestedID == "" {
@@ -80,22 +82,24 @@ func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context
 		}
 		report, err := runStep(ctx, childParams, childActx, nestedStep, nestedID)
 		if err != nil {
-			return "", nil, fmt.Errorf("nested step %s: %w", nestedID, err)
+			return "", nil, "", "", fmt.Errorf("nested step %s: %w", nestedID, err)
 		}
+		stdoutBuilder.WriteString(report.Stdout)
+		stderrBuilder.WriteString(report.Stderr)
 		if report.Conclusion == "failure" && !nestedStep.ContinueOnError {
 			conclusion = "failure"
 			break
 		}
 	}
 
-	outputs := map[string]string{}
+	outputs = map[string]string{}
 	for name, out := range comp.Outputs {
 		val, err := SubstituteExpressions(out.Value, childActx)
 		if err != nil {
-			return "", nil, fmt.Errorf("evaluate output %q: %w", name, err)
+			return "", nil, "", "", fmt.Errorf("evaluate output %q: %w", name, err)
 		}
 		outputs[name] = val
 	}
 
-	return conclusion, outputs, nil
+	return conclusion, outputs, stdoutBuilder.String(), stderrBuilder.String(), nil
 }

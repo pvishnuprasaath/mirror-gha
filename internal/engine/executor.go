@@ -166,12 +166,12 @@ func runStep(ctx context.Context, p runStepParams, actx *Context, step Step, id 
 	}
 
 	if plan.Composite != nil {
-		conclusion, outputs, err := runCompositeSteps(ctx, p, actx, plan.Composite)
+		conclusion, outputs, stdout, stderr, err := runCompositeSteps(ctx, p, actx, plan.Composite)
 		if err != nil {
 			return StepReport{}, fmt.Errorf("composite step %s: %w", id, err)
 		}
 		actx.Steps[id] = StepOutcome{Outcome: conclusion, Outputs: outputs}
-		return StepReport{ID: id, Name: step.Name, Conclusion: conclusion}, nil
+		return StepReport{ID: id, Name: step.Name, Conclusion: conclusion, Stdout: stdout, Stderr: stderr}, nil
 	}
 
 	filesDir, err := os.MkdirTemp(p.RunnerJob.FilesRoot(), "step-")
