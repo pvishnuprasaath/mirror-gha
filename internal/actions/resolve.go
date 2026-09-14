@@ -13,6 +13,12 @@ type ActionRef struct {
 	Local     bool
 	LocalPath string
 
+	// Docker is set for a raw `docker://image:tag` reference — no
+	// action.yml, no repo to fetch, no source directory. DockerImage is
+	// the image reference with the docker:// prefix stripped.
+	Docker      bool
+	DockerImage string
+
 	Owner   string
 	Repo    string
 	Subpath string
@@ -21,6 +27,9 @@ type ActionRef struct {
 
 // ResolveUsesRef parses a step's `uses:` value.
 func ResolveUsesRef(uses string) (ActionRef, error) {
+	if strings.HasPrefix(uses, "docker://") {
+		return ActionRef{Docker: true, DockerImage: strings.TrimPrefix(uses, "docker://")}, nil
+	}
 	if strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "../") {
 		return ActionRef{Local: true, LocalPath: uses}, nil
 	}

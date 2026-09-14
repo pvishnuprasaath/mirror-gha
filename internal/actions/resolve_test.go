@@ -51,6 +51,22 @@ func TestResolveUsesRef_MissingRefIsError(t *testing.T) {
 	}
 }
 
+func TestResolveUsesRef_DockerImage(t *testing.T) {
+	ref, err := ResolveUsesRef("docker://alpine:3.19")
+	if err != nil {
+		t.Fatalf("ResolveUsesRef() error = %v", err)
+	}
+	if !ref.Docker {
+		t.Error("Docker = false, want true")
+	}
+	if ref.DockerImage != "alpine:3.19" {
+		t.Errorf("DockerImage = %q, want %q", ref.DockerImage, "alpine:3.19")
+	}
+	if ref.Local {
+		t.Error("Local = true, want false")
+	}
+}
+
 func TestResolveUsesRef_MissingRepoIsError(t *testing.T) {
 	_, err := ResolveUsesRef("actions@v4")
 	if err == nil {
