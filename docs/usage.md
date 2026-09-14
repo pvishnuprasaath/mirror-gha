@@ -168,9 +168,16 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   expression-context value as a real `GITHUB_*` env var (previously
   only available inside `${{ }}` expressions) — a general correctness
   gap found while getting this working for real, not specific to cache.
-  Artifacts (`actions/upload-artifact`/`download-artifact`) are not
-  supported yet (see below) — a separate feature area with its own,
-  larger API surface (both the legacy v3 and current v4 protocols).
+- **Real `actions/upload-artifact`/`download-artifact` support** — both
+  the legacy v3 REST protocol and the current v4 protocol, served by one
+  local HTTP server (`internal/artifactserver`). Unlike the cache store,
+  artifact storage is a fresh directory per `mirror run` invocation
+  (printed at the end of the run so it's inspectable) — never restored
+  by a later invocation, matching real GitHub Actions' own per-run
+  artifact model. No new action-type dispatch was needed: both actions
+  are themselves bundled JS actions, running through the existing
+  JS-actions machinery unmodified once the right env vars
+  (`ACTIONS_RUNTIME_URL`, `ACTIONS_RESULTS_URL`) are present.
 - **JS action post entry points** (`runs.post` in `action.yml`) run
   after all of a job's own top-level steps finish, in reverse step
   order, with state passed from the main run via `$GITHUB_STATE` /
@@ -190,7 +197,6 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Artifacts (`actions/upload-artifact` / `download-artifact`, v3 and v4)
 - `matrix.include` / `matrix.exclude`
 - `services:` and `container:` job fields
 - Windows and macOS runners (`windows-latest`, `macos-latest`) — these

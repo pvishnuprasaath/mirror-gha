@@ -20,7 +20,7 @@ type namedFileContainerResourceURL struct {
 }
 
 type namedFileContainerResourceURLResponse struct {
-	Count int                              `json:"count"`
+	Count int                             `json:"count"`
 	Value []namedFileContainerResourceURL `json:"value"`
 }
 

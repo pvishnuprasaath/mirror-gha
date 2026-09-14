@@ -26,12 +26,14 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`uses-local-repository.yml`](workflows/uses-local-repository.yml) | `--local-repository owner/repo@ref=local/path` — overrides a Marketplace-style reference to resolve from a local directory instead of fetching over the network |
 | [`vars-context.yml`](workflows/vars-context.yml) | The `vars.*` expression context, populated via `--var NAME=VALUE` or `--var-file` (no repository/organization variable store exists to read from otherwise) |
 | [`uses-cache.yml`](workflows/uses-cache.yml) | Real `actions/cache@v4` save/restore against mirror-gha's own local cache server — run it twice to see the second run's genuine cache hit |
+| [`uses-artifact-v4.yml`](workflows/uses-artifact-v4.yml) | Real `actions/upload-artifact@v4`/`download-artifact@v4` — one job uploads a file, a later job downloads and verifies it round-tripped |
+| [`uses-artifact-v3.yml`](workflows/uses-artifact-v3.yml) | Same as above, pinned to the legacy v3 major — proves the older REST protocol works too |
 
 ## What's not shown here (yet)
 
 These examples deliberately stick to what's actually implemented today.
-Artifacts, matrix `include`/`exclude`, and Windows/macOS runners aren't
-supported yet — see
+Matrix `include`/`exclude` and Windows/macOS runners aren't supported
+yet — see
 [the roadmap](../docs/design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
 for what's coming and in what order. Workflow files using those features
 will fail with a clear "not supported yet" error rather than silently

@@ -1,0 +1,31 @@
+# Demonstrates real actions/upload-artifact@v4 / download-artifact@v4 —
+# one job uploads a file, a later job downloads it back and verifies the
+# content round-trips. Artifact server details are entirely invisible to
+# the workflow, exactly like real GitHub Actions.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-artifact-v4.yml
+name: uses artifact v4
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: create artifact content
+        run: 'mkdir -p out && echo "hello from build (v4)" > out/greeting.txt'
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: greeting-v4
+          path: out/greeting.txt
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: greeting-v4
+          path: downloaded
+      - name: verify content round-tripped
+        run: 'cat downloaded/greeting.txt'

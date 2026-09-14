@@ -1,0 +1,30 @@
+# Same shape as uses-artifact-v4.yml, but pinned to the legacy v3 major —
+# proves the older REST protocol works against a real, unmodified action
+# too, not just v4.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-artifact-v3.yml
+name: uses artifact v3
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: create artifact content
+        run: 'mkdir -p out && echo "hello from build (v3)" > out/greeting.txt'
+      - name: upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: greeting-v3
+          path: out/greeting.txt
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: greeting-v3
+          path: downloaded
+      - name: verify content round-tripped
+        run: 'cat downloaded/greeting.txt'

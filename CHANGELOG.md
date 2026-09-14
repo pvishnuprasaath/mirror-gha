@@ -156,6 +156,23 @@ Unreleased until the first `v0.1.0`.
   executed at all, so caching silently only ever restored and never
   saved. Composite-nested `uses:` steps' own post actions are a
   documented, accepted scope limit for now.
+- **Real `actions/upload-artifact`/`download-artifact` support.** A new
+  local HTTP server (`internal/artifactserver`) implements both act's
+  real legacy v3 REST routes and its v4 routes — hand-written plain JSON
+  (no `google.golang.org/protobuf` dependency) matching the real wire
+  format confirmed against genuine client traffic this session. Shares
+  one server with a fresh, non-persisted store per `mirror run`
+  invocation (the opposite of the cache store, which deliberately does
+  persist — artifacts belong to one run, not restored across later
+  ones). Always-on alongside the cache server, no new flag — a
+  deliberate divergence from act's own opt-in `--artifact-server-path`.
+  Also adds `GITHUB_RUN_ID`/`GITHUB_RUN_NUMBER`/`GITHUB_RUN_ATTEMPT` as
+  real env vars (fixed placeholder values, proactively closing the same
+  bug class found with `GITHUB_REF` during Cache Runtime). Verified for
+  real against both a current (`@v4`) and legacy pinned (`@v3`) version
+  of the real, unmodified actions in a two-job upload-then-download
+  workflow, confirming genuine content round-tripping through both
+  protocols.
 
 ### Fixed
 
@@ -202,11 +219,40 @@ Unreleased until the first `v0.1.0`.
   bind-mounted path, `GITHUB_STATE`'s value was briefly set to the
   host filesystem path directly. Fixed by computing it the same way as
   the other three, at the same layer.
+- **`ACTIONS_RUNTIME_TOKEN` crashed the real v4 artifact client before
+  any request was made.** Found via real end-to-end testing:
+  `actions/upload-artifact@v4`'s bundled client runs the token through a
+  `jwt-decode` library first; mirror-gha's plain placeholder string (no
+  `.` separators) made `token.split(".")[1]` return `undefined`,
+  crashing with "Invalid token specified: Cannot read properties of
+  undefined (reading 'replace')" — before the artifact server ever saw a
+  single request. Neither server validates this token, so any
+  JWT-*shaped* value works; fixed by generating one.
+- **v4 artifact `size`/`artifactId` fields rejected as invalid JSON.**
+  protojson encodes 64-bit integer fields as JSON strings, not numbers,
+  to avoid precision loss in JS — confirmed from the real client's
+  actual request body, not just inferred from act's server-side struct
+  tags. Fixed via Go's built-in `json:",string"` tag option.
+- **v4 artifact upload silently corrupted by its own finalize request.**
+  The real v4 client speaks Azure Blob Storage's block-upload protocol
+  against `UploadArtifact`: a `comp=block` request carries real content
+  bytes, but a final `comp=blocklist` request carries an XML manifest,
+  not content. mirror-gha wrote every `PUT` unconditionally, so that
+  manifest silently overwrote the real uploaded zip with garbage —
+  surfacing only as "Not a valid zip file" on download, several steps
+  removed from the actual cause. Fixed by no-oping `comp=blocklist`.
+- **v3 artifact download listed the wrong path, so downloads silently
+  found nothing.** The container-item listing's `path` field used the
+  run id (e.g. `"1"`) as its leading path component instead of the
+  artifact name — the real `actions/download-artifact@v3` client didn't
+  error on this, it just silently reported "No downloadable files were
+  found for the artifact," which would have been easy to miss without
+  running the real, unmodified action.
 
 ### Known limitations
 
 See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) —
-artifacts, `matrix.include`/`exclude`, `services:`/`container:` job
+`matrix.include`/`exclude`, `services:`/`container:` job
 fields, and Windows/macOS runners are not implemented yet, by design
 and in that order (see the
 [design spec](docs/design/specs/2026-09-14-mirror-gha-design.md)).

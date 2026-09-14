@@ -601,6 +601,8 @@ across process invocations) with no fakes anywhere in the chain.
 
 ## Artifacts Runtime
 
+**Implemented.**
+
 **Scope:** `actions/upload-artifact` and `actions/download-artifact`
 working for real — both the legacy v3 REST protocol and the current v4
 protocol, together in one sub-project (unlike Cache Runtime, this one
