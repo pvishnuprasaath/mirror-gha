@@ -156,6 +156,28 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   per line, blank lines and `#` comments skipped, missing file not an
   error) — matching act's own `--var`/`--var-file` flags exactly. `--var`
   entries override `--var-file` entries on conflict.
+- **Real `actions/cache` support** — a local HTTP server matching
+  GitHub's actual cache API (not a filesystem shim, which
+  `actions/cache` would never call into) serves save/restore requests
+  from the real, unmodified action. Restore-keys matching mirrors
+  GitHub's actual semantics (exact match, then prefix-match fallback,
+  most-recently-created wins) rather than a simplified approximation.
+  The cache store persists across separate `mirror run` invocations —
+  a cache saved in one run is genuinely restorable in a later one, the
+  entire point of the feature. Also required exporting every `github.*`
+  expression-context value as a real `GITHUB_*` env var (previously
+  only available inside `${{ }}` expressions) — a general correctness
+  gap found while getting this working for real, not specific to cache.
+  Artifacts (`actions/upload-artifact`/`download-artifact`) are not
+  supported yet (see below) — a separate feature area with its own,
+  larger API surface (both the legacy v3 and current v4 protocols).
+- **JS action post entry points** (`runs.post` in `action.yml`) run
+  after all of a job's own top-level steps finish, in reverse step
+  order, with state passed from the main run via `$GITHUB_STATE` /
+  `STATE_*` env vars — exactly how `actions/cache@v4` itself works (its
+  `main` only restores; the actual save happens in `post`). Nested
+  `uses:` steps inside a composite action don't get their own post
+  actions run yet — a documented, accepted scope limit.
 
 See [`examples/`](../examples/) for a runnable demonstration of each of
 these.
@@ -168,8 +190,7 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Artifacts (`actions/upload-artifact` / `download-artifact`) and caching
-  (`actions/cache`)
+- Artifacts (`actions/upload-artifact` / `download-artifact`, v3 and v4)
 - `matrix.include` / `matrix.exclude`
 - `services:` and `container:` job fields
 - Windows and macOS runners (`windows-latest`, `macos-latest`) — these

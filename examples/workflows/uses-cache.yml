@@ -1,0 +1,24 @@
+# Demonstrates real actions/cache@v4 save/restore — cache server details
+# are entirely invisible to the workflow itself, exactly like real
+# GitHub Actions: the action just calls ACTIONS_CACHE_URL, which mirror
+# run points at its own local cache server.
+#
+# Try it (from the repo root) — run it TWICE to see the second-run hit:
+#   mirror run examples/workflows/uses-cache.yml
+name: uses cache
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: restore cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: cache-data
+          key: mirror-gha-demo-cache-v1
+      - name: report cache status
+        run: 'echo "cache-hit output: [${{ steps.cache.outputs.cache-hit }}]"'
+      - name: populate cache data on a miss
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: 'mkdir -p cache-data && echo "cached-content" > cache-data/file.txt'

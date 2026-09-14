@@ -121,6 +121,41 @@ Unreleased until the first `v0.1.0`.
   `--var-file` on conflict. Verified for real: an `if:` gated on
   `vars.ENVIRONMENT == 'staging'` is skipped with no flags, runs with
   `--var ENVIRONMENT=staging`, and runs identically via `--var-file`.
+- **Real `actions/cache` support.** A new local HTTP server
+  (`internal/cacheserver`) implements GitHub's actual cache API —
+  `GET/POST/PATCH /_apis/artifactcache/...` — matching act's own
+  `pkg/artifactcache` route surface and restore-keys matching
+  (exact match, then anchored-prefix match, most-recently-created
+  wins). Started once per `mirror run` invocation (not per-job,
+  matching act's lifecycle), reachable from job containers via
+  `host.docker.internal` (this project's actual dev/test environment
+  is macOS Docker Desktop; plain Linux `dockerd` needs extra
+  configuration not yet wired up). The cache store persists across
+  separate `mirror run` invocations at `~/.cache/mirror-gha/action-cache/`
+  (`~/Library/Caches/mirror-gha/action-cache/` on macOS) — ephemeral-
+  per-run would defeat the entire point of caching. No new action-type
+  dispatch was needed: `actions/cache` is itself a bundled JS action,
+  so it runs through the existing JS-actions machinery unmodified once
+  the right env vars (`ACTIONS_CACHE_URL`, `ACTIONS_RUNTIME_TOKEN`) are
+  present. Verified for real against the actual, unmodified
+  `actions/cache@v4` action: a save on one `mirror run` invocation is
+  genuinely restored (confirmed `cache-hit: true`, real tar extraction,
+  the populate-on-miss step correctly skipped, post correctly declining
+  to re-save on a hit) on a second, separate invocation. Artifacts
+  (`upload-artifact`/`download-artifact`, v3+v4) remain a separate,
+  unscheduled follow-up.
+- **JS action `post` entry points.** `runs.post` (and `runs.post-if`)
+  from `action.yml` now execute — once per job, after all of that job's
+  own top-level steps finish, in reverse step order — with state passed
+  from the main run via a new `$GITHUB_STATE` file and `STATE_*` env
+  vars on the post invocation, matching real GitHub Actions' main/post
+  contract exactly. Found necessary via real end-to-end testing of
+  `actions/cache@v4`: its `action.yml` declares `main:
+  dist/restore/index.js` and `post: dist/save/index.js` — the actual
+  save only ever happens in `post`, which mirror-gha previously never
+  executed at all, so caching silently only ever restored and never
+  saved. Composite-nested `uses:` steps' own post actions are a
+  documented, accepted scope limit for now.
 
 ### Fixed
 
@@ -151,11 +186,27 @@ Unreleased until the first `v0.1.0`.
   but its nested steps' console output vanished. Fixed by concatenating
   every nested step's stdout/stderr into the composite's own outer
   `StepReport`.
+- **`github.*` context values never reached real steps as env vars.**
+  Found via real end-to-end testing of `actions/cache@v4`: its save
+  logic gates on `process.env.GITHUB_REF` existing at all, and
+  mirror-gha only ever populated `github.*` values inside `${{ }}`
+  expressions, never as actual `GITHUB_*` environment variables — a
+  general correctness gap (any action reading `process.env.GITHUB_REF`
+  directly hit this), not specific to cache. Every string-valued
+  `github.*` context entry is now exported as its real `GITHUB_*` env
+  var for every step, matching real GitHub Actions.
+- **`GITHUB_STATE` pointed at a host path from inside the container.**
+  Introduced alongside JS action post-entry-point support and caught
+  before merging: unlike `GITHUB_ENV`/`OUTPUT`/`PATH`/`STEP_SUMMARY`,
+  which the Docker backend already translates to the container's own
+  bind-mounted path, `GITHUB_STATE`'s value was briefly set to the
+  host filesystem path directly. Fixed by computing it the same way as
+  the other three, at the same layer.
 
 ### Known limitations
 
 See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) —
-artifacts/caching, `matrix.include`/`exclude`, `services:`/`container:`
-job fields, and Windows/macOS runners are not implemented yet, by design
+artifacts, `matrix.include`/`exclude`, `services:`/`container:` job
+fields, and Windows/macOS runners are not implemented yet, by design
 and in that order (see the
 [design spec](docs/design/specs/2026-09-14-mirror-gha-design.md)).

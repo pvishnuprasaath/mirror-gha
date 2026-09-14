@@ -492,6 +492,8 @@ extract path entirely, with no change to `FetchRemote` itself.
 
 ## Cache Runtime
 
+**Implemented.**
+
 **Scope:** `actions/cache` (save/restore) working for real. Artifacts
 (`actions/upload-artifact`/`download-artifact`, v3 and v4) are a
 separate, still-unscheduled follow-up — deliberately split out given
