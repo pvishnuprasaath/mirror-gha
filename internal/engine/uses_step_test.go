@@ -81,26 +81,79 @@ runs:
 	}
 }
 
-func TestPrepareUsesStep_RejectsCompositeRuntime(t *testing.T) {
+func TestPrepareUsesStep_RejectsUnknownRuntime(t *testing.T) {
 	workspaceDir := t.TempDir()
-	actionDir := filepath.Join(workspaceDir, "composite-action")
+	actionDir := filepath.Join(workspaceDir, "mystery-action")
 	if err := os.MkdirAll(actionDir, 0o755); err != nil {
 		t.Fatalf("mkdir action dir: %v", err)
 	}
-	actionYML := "name: 'Composite Action'\nruns:\n  using: 'composite'\n"
+	actionYML := "name: 'Mystery Action'\nruns:\n  using: 'some-future-runtime'\n"
 	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
 		t.Fatalf("write action.yml: %v", err)
 	}
 
 	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
-	step := Step{Uses: "./composite-action"}
+	step := Step{Uses: "./mystery-action"}
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := true
 	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
 
 	_, err := prepareUsesStep(context.Background(), p, "one", step, actx)
 	if err == nil {
-		t.Fatal("prepareUsesStep() error = nil, want error for runs.using: composite")
+		t.Fatal("prepareUsesStep() error = nil, want error for an unknown runs.using")
+	}
+}
+
+func TestPrepareUsesStep_CompositeAction(t *testing.T) {
+	workspaceDir := t.TempDir()
+	actionDir := filepath.Join(workspaceDir, "composite-action")
+	if err := os.MkdirAll(actionDir, 0o755); err != nil {
+		t.Fatalf("mkdir action dir: %v", err)
+	}
+	actionYML := `
+name: 'Composite Action'
+inputs:
+  who-to-greet:
+    default: 'World'
+outputs:
+  greeting:
+    value: '${{ steps.greet.outputs.greeting }}'
+runs:
+  using: 'composite'
+  steps:
+    - id: greet
+      shell: 'sh'
+      run: 'echo hi'
+`
+	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
+	step := Step{Uses: "./composite-action", With: map[string]string{"who-to-greet": "mirror-gha"}}
+	actx := NewContext(&Workflow{}, &Job{})
+	nodeReady := false
+	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
+
+	plan, err := prepareUsesStep(context.Background(), p, "greet-step", step, actx)
+	if err != nil {
+		t.Fatalf("prepareUsesStep() error = %v", err)
+	}
+	if plan.Composite == nil {
+		t.Fatal("Composite = nil, want non-nil for a composite action")
+	}
+	if len(plan.Composite.Steps) != 1 || plan.Composite.Steps[0].ID != "greet" {
+		t.Errorf("Composite.Steps = %+v, want one step with ID=greet", plan.Composite.Steps)
+	}
+	if plan.Composite.BaseEnv["INPUT_WHO-TO-GREET"] != "mirror-gha" {
+		t.Errorf(`Composite.BaseEnv["INPUT_WHO-TO-GREET"] = %q, want %q`, plan.Composite.BaseEnv["INPUT_WHO-TO-GREET"], "mirror-gha")
+	}
+	if plan.Composite.BaseEnv["GITHUB_ACTION_PATH"] != "/mirror-actions/greet-step" {
+		t.Errorf(`Composite.BaseEnv["GITHUB_ACTION_PATH"] = %q, want %q`, plan.Composite.BaseEnv["GITHUB_ACTION_PATH"], "/mirror-actions/greet-step")
+	}
+	out, ok := plan.Composite.Outputs["greeting"]
+	if !ok || out.Value != "${{ steps.greet.outputs.greeting }}" {
+		t.Errorf(`Composite.Outputs["greeting"] = %+v, want Value=${{ steps.greet.outputs.greeting }}`, out)
 	}
 }
 

@@ -19,9 +19,10 @@ import (
 // (plus runs.env for Docker actions) either way, merged into the step's
 // env by the caller exactly like today.
 type usesStepPlan struct {
-	Args   []string
-	Env    map[string]string
-	Docker *runner.DockerActionSpec
+	Args      []string
+	Env       map[string]string
+	Docker    *runner.DockerActionSpec
+	Composite *compositeInvocation
 }
 
 // prepareUsesStep resolves and stages a uses: step's action. actx is used
@@ -148,7 +149,34 @@ func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step S
 		}
 		return usesStepPlan{Env: env, Docker: spec}, nil
 
+	case metadata.Runs.Using == "composite":
+		if err := p.RunnerJob.CopyToContainer(ctx, hostSourceDir, containerActionPath); err != nil {
+			return usesStepPlan{}, fmt.Errorf("copy composite action %s into job: %w", step.Uses, err)
+		}
+		nestedSteps := make([]Step, len(metadata.Runs.Steps))
+		for i, as := range metadata.Runs.Steps {
+			nestedSteps[i] = Step{
+				ID:               as.ID,
+				Name:             as.Name,
+				Run:              as.Run,
+				Uses:             as.Uses,
+				With:             as.With,
+				Shell:            as.Shell,
+				Env:              as.Env,
+				If:               as.If,
+				ContinueOnError:  as.ContinueOnError,
+				WorkingDirectory: as.WorkingDirectory,
+			}
+		}
+		baseEnv := actions.InputEnv(metadata, with)
+		baseEnv["GITHUB_ACTION_PATH"] = containerActionPath
+		return usesStepPlan{Composite: &compositeInvocation{
+			Steps:   nestedSteps,
+			Outputs: metadata.Outputs,
+			BaseEnv: baseEnv,
+		}}, nil
+
 	default:
-		return usesStepPlan{}, fmt.Errorf("action %s has runs.using=%q, which isn't supported yet (only JS/node and Docker actions run today)", step.Uses, metadata.Runs.Using)
+		return usesStepPlan{}, fmt.Errorf("action %s has runs.using=%q, which isn't supported (expected node*, docker, or composite)", step.Uses, metadata.Runs.Using)
 	}
 }
