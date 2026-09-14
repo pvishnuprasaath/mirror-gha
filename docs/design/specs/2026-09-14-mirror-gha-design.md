@@ -490,6 +490,113 @@ same shape: the override map is threaded through `JobRunOptions` into
 hit returns the local path directly, skipping the fetch/cache/tar-
 extract path entirely, with no change to `FetchRemote` itself.
 
+## Cache Runtime
+
+**Scope:** `actions/cache` (save/restore) working for real. Artifacts
+(`actions/upload-artifact`/`download-artifact`, v3 and v4) are a
+separate, still-unscheduled follow-up — deliberately split out given
+the size of this feature area, per the "Artifacts and cache must be
+real local HTTP servers" finding above.
+
+Every design decision below was checked against act's actual source
+(`nektos/act`, `pkg/artifactcache/`), per the standing direction to
+treat it as the reference implementation for exactly this kind of
+choice.
+
+**No new action-type dispatch — this is the elegant part.**
+`actions/cache` is itself a bundled JS action; it runs through
+mirror-gha's *existing* JS-actions machinery (`prepareUsesStep`'s
+`node*` branch) completely unmodified. Supporting it isn't "teach the
+engine about a fourth action kind" — it's "run an HTTP server and set
+two env vars," and the action's own bundled `@actions/cache` client
+does the rest. No change needed to `prepareUsesStep`'s dispatch at all.
+
+**API surface — matched to act's real routes, which match
+`@actions/cache`'s actual client expectations** (`pkg/artifactcache/
+handler.go:98-103`, confirmed against act's source rather than GitHub's
+public docs, which don't fully describe this internal-only API): `GET
+/_apis/artifactcache/cache?keys=...&version=...` (lookup), `POST
+/_apis/artifactcache/caches` (reserve), `PATCH
+/_apis/artifactcache/caches/{id}` (chunked upload via `Content-Range`),
+`POST /_apis/artifactcache/caches/{id}` (commit/finalize), `GET
+/_apis/artifactcache/artifacts/{id}` (blob download — the URL the
+lookup response's `archiveLocation` points at), `POST
+/_apis/artifactcache/clean` (no-op — satisfies the client's optional
+call, matches act not implementing real cleanup logic here either).
+
+**Restore-keys matching is a real reimplementation, not simplified
+away.** act's `findCache` (`handler.go:372-404`): for each key in the
+ordered list (the primary key, then `restore-keys` fallbacks in order),
+try an exact match first; on a miss, an anchored-regex prefix match
+(`^` + `regexp.QuoteMeta(prefix)`) against every stored key, sorted by
+creation time descending (most-recent-wins). This is GitHub's actual
+matching semantics, not a stub — real workflows depend on prefix
+fallback behaving exactly this way (e.g. restoring the closest
+dependency-lockfile-keyed cache when today's exact hash doesn't exist
+yet). mirror-gha reproduces this exactly.
+
+**Storage persists across invocations — this is not optional.** A
+cache's entire purpose is surviving to a *later* run; an ephemeral
+per-`mirror run` store would make `actions/cache` permanently miss and
+defeat the feature. Blobs plus a JSON index (key, version, size,
+createdAt) live at `~/.cache/mirror-gha/action-cache/`, parallel to the
+existing action-source and Node caches. Deliberate divergence from
+act's BoltDB-backed index (`pkg/artifactcache/storage.go`): a plain
+JSON file behind an in-process mutex needs no new dependency (matches
+every prior sub-project's Go-stdlib-only constraint) and is sufficient
+for a single local CLI process — two concurrent `mirror run` invocations
+racing the same store is an accepted, documented risk, not solved here.
+
+**Server lifecycle — once per `mirror run` invocation, not per job.**
+Checked against act's own lifecycle (`cmd/root.go:679-687`): both of
+act's servers start once per `act` invocation, before any job runs, not
+per-job — the opposite of how mirror-gha's Docker-action containers
+work (spun up and torn down per step). mirror-gha's cache server
+follows act's shape here: started in `cmd/mirror/main.go`'s
+`runCommand`, before `RunWorkflow`, stopped via `defer` after it
+returns — skipped entirely in `--list`/`--graph`/`--dryrun` modes,
+which already never touch Docker.
+
+**Networking — `host.docker.internal`, a deliberate divergence from
+act's outbound-IP-binding trick.** act binds
+`common.GetOutboundIP()` (`cmd/root.go:118`) — the host's real outbound
+network IP — so a Linux container can reach back to the host process
+without special networking. This project's actual development and
+testing environment is macOS with Docker Desktop throughout (every
+example workflow this session was verified against it), where
+`host.docker.internal` is a built-in DNS alias resolving to the host
+from inside any container — simpler and more portable across Docker
+Desktop (macOS/Windows) than IP-autodetection, at the cost of not
+working out of the box against plain Linux `dockerd` without extra
+`--add-host` configuration. Documented as a known limitation (fixable
+later with act's own outbound-IP fallback if Linux-host support becomes
+a priority), not silently assumed to work everywhere. The server binds
+`0.0.0.0:0` (OS-assigned port, avoiding collisions across concurrent
+local runs) and `ACTIONS_CACHE_URL` is built as
+`http://host.docker.internal:<port>/`.
+
+**Env injection — one shared layer, not per step type.** Checked
+against act's `withGithubEnv`/`setActionRuntimeVars`
+(`run_context.go:1027,1075`): the cache/artifact env vars are set once,
+at the same base-env layer every step type already shares — not
+branched per `run:`/JS/Docker/composite step type. mirror-gha follows
+this exactly: `ACTIONS_CACHE_URL` and a fixed placeholder
+`ACTIONS_RUNTIME_TOKEN` (no real auth backend exists to validate a
+token against — `@actions/cache`'s client just needs *a* non-empty
+bearer value present, matching act's own approach of a locally-signed
+but not really gatekept token) are merged into every job's `Context.Env`
+at the same point `wf.Env`/`job.Env` already merge in `NewContext`, so
+every step — regardless of kind — sees them identically.
+
+**Testing:** unit tests per route via Go's `httptest` (reserve/upload/
+commit/lookup/restore-key-matching), no Docker needed for these. Real
+end-to-end proof: the actual `actions/cache@v4` action doing a save
+then a restore across two *separate* `mirror run` invocations of the
+same workflow, verifying a genuine cache hit on the second run — this
+exercises the full real stack (a real JS action, a real HTTP call from
+inside the container back to the host server, real disk persistence
+across process invocations) with no fakes anywhere in the chain.
+
 ## Data flow
 
 ```
@@ -514,20 +621,27 @@ mirror run [workflow.yml] [--event push --payload event.json]
 ```
 
 **Artifacts and cache must be real local HTTP servers, not a filesystem
-shim.** Comparing against act's `pkg/artifacts/` and `pkg/artifactcache/`
-confirmed how this actually has to work: `actions/upload-artifact` and
-`actions/cache` don't read/write files directly — they call GitHub's real
-Artifact/Cache REST API, at a URL the runner injects via
-`ACTIONS_RUNTIME_URL` (and a matching runtime token) as job-scoped
-environment variables. To work unmodified, this project's engine must run
-a local HTTP server implementing that same API surface (upload/download/
-finalize for artifacts; get/reserve/save for cache) and inject its own
-`ACTIONS_RUNTIME_URL` pointing at it — a plain "watch the filesystem"
-shim would not be intercepted by those actions at all, since they never
-touch the filesystem directly for this. The storage backing that server
-can still be the local filesystem, keyed the same way GitHub's real API
-keys artifacts/cache entries (name + path + hash) — that part of the
-original design holds, only the transport layer needed correcting.
+shim.** Re-verified directly against act's real source for this
+sub-project (`pkg/artifacts/server.go`, `pkg/artifactcache/handler.go`),
+not just inferred: `actions/upload-artifact` and `actions/cache` don't
+read/write files directly — they call GitHub's real Artifact/Cache REST
+API, at a URL the runner injects via `ACTIONS_CACHE_URL`/
+`ACTIONS_RUNTIME_URL` (plus a runtime token) as job-scoped environment
+variables. A plain "watch the filesystem" shim would never be
+intercepted by those actions at all, since they never touch the
+filesystem directly for this. Two corrections to the original note,
+found only by reading act's actual source rather than trusting the
+general-knowledge version of this claim: **artifacts need both the old
+REST-ish v3 API and the newer twirp-shaped v4 API** (act implements
+both on the same router — real-world workflows are split across
+`actions/upload-artifact@v3` and `@v4+`, so v4-only would silently break
+a large fraction of them), and **act's cache-key restore-keys matching
+is a real reimplementation of GitHub's own semantics** (exact match per
+key, then anchored-regex prefix match, most-recent-created wins) — not
+a stub, and not something mirror-gha can simplify away without breaking
+real workflows' actual cache-hit behavior. See the "Cache Runtime"
+section below for the first sub-project built on this finding;
+artifacts (v3+v4) are a separate, still-unscheduled follow-up.
 
 ## Phased feature-parity matrix
 
