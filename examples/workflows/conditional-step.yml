@@ -1,0 +1,19 @@
+# Demonstrates `if:` conditions evaluated against the env context, and a
+# step that gets skipped rather than run.
+#
+# Try it:
+#   mirror run examples/workflows/conditional-step.yml
+name: conditional step
+on: push
+env:
+  DEPLOY_ENV: staging
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: only runs in production
+        if: ${{ env.DEPLOY_ENV == 'production' }}
+        run: echo "This will be skipped — DEPLOY_ENV is 'staging'"
+      - name: only runs outside production
+        if: ${{ env.DEPLOY_ENV != 'production' }}
+        run: echo "This runs — we're not in production"

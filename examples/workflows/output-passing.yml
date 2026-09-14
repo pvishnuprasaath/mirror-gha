@@ -1,0 +1,17 @@
+# Demonstrates a step writing to $GITHUB_OUTPUT and a later step reading
+# it back via steps.<id>.outputs.<name> — the same file-based protocol
+# real GitHub Actions uses.
+#
+# Try it:
+#   mirror run examples/workflows/output-passing.yml
+name: output passing
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compute a version string
+        id: version
+        run: echo "value=1.2.3" >> "$GITHUB_OUTPUT"
+      - name: use it in a later step
+        run: echo "Building version ${{ steps.version.outputs.value }}"

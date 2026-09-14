@@ -1,0 +1,17 @@
+# Demonstrates `continue-on-error: true` — a failing step that doesn't
+# stop the rest of the job, versus one that would.
+#
+# Try it:
+#   mirror run examples/workflows/continue-on-error.yml
+#   (exits 0 — the failing step is tolerated)
+name: continue on error
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a flaky check we don't want to block the build
+        continue-on-error: true
+        run: exit 1
+      - name: this still runs
+        run: echo "We got here even though the previous step failed"

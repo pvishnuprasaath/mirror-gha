@@ -1,0 +1,5 @@
+# Vendored dependency — exclude from language stats and collapse in diffs
+third_party/** linguist-vendored
+
+* text=auto eol=lf
+*.go text eol=lf

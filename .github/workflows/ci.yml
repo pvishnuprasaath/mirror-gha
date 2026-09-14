@@ -15,21 +15,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
+          cache: false # no go.sum: the one dependency is vendored via a local `replace`
 
       - name: Build
-        run: go build -o bin/mirror ./cmd/mirror
+        run: make build
 
       - name: Test
-        run: go test ./... -v
+        run: make test
 
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l . | grep -v '^third_party/')
-          if [ -n "$unformatted" ]; then
-            echo "The following files are not gofmt'd:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: make fmt-check

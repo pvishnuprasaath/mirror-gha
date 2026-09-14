@@ -13,6 +13,6 @@ Link to the relevant [GitHub Actions documentation](https://docs.github.com/acti
 
 **Is this already tracked in the roadmap?**
 
-Check `docs/superpowers/specs/2026-09-14-mirror-gha-design.md` (phased
+Check `docs/design/specs/2026-09-14-mirror-gha-design.md` (phased
 feature-parity matrix) before filing — it may already be a known,
 sequenced gap rather than a missing idea.

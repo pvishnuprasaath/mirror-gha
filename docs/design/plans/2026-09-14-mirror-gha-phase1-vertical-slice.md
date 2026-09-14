@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.27, `gopkg.in/yaml.v3` for YAML parsing, `os/exec` to drive Docker (no Docker SDK dependency — YAGNI for this slice), stdlib `testing`.
 
-**Spec:** `/Users/vishnu.prasaath/workspace/mirror-gha/docs/superpowers/specs/2026-09-14-mirror-gha-design.md`
+**Spec:** `/Users/vishnu.prasaath/workspace/mirror-gha/docs/design/specs/2026-09-14-mirror-gha-design.md`
 
 ## Global Constraints
 
@@ -1109,7 +1109,7 @@ type ErrUnsupportedRunner struct {
 }
 
 func (e *ErrUnsupportedRunner) Error() string {
-	return fmt.Sprintf("runner %q is not supported yet (only ubuntu-latest/ubuntu-22.04/ubuntu-24.04 run today — see docs/superpowers/specs for the Phase 2/3 roadmap)", e.RunsOn)
+	return fmt.Sprintf("runner %q is not supported yet (only ubuntu-latest/ubuntu-22.04/ubuntu-24.04 run today — see docs/design/specs for the Phase 2/3 roadmap)", e.RunsOn)
 }
 
 // SelectBackend maps a job's `runs-on` value to a concrete Backend.

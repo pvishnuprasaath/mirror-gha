@@ -1,0 +1,14 @@
+# The simplest possible workflow: a job with a couple of `run:` steps.
+#
+# Try it:
+#   mirror run examples/workflows/basic-run.yml
+name: basic run
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: say hello
+        run: echo "Hello from inside a real Docker container"
+      - name: show environment
+        run: echo "Running as $(whoami) on $(uname -a)"

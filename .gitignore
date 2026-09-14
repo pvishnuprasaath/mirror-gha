@@ -1,13 +1,29 @@
+# Build output
 /bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
 *.test
 *.out
+coverage.txt
+coverage.html
 
 # OS
 .DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
+
+# Secrets — never commit these, use env vars / a secrets manager instead
+.env
+.env.*
+*.pem
+*.key
 
 # Local scratch
 *.local.yml
