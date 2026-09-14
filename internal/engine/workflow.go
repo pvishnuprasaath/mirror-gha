@@ -55,6 +55,17 @@ type Strategy struct {
 	MaxParallel int                    `yaml:"max-parallel"`
 }
 
+// ContainerSpec is a job's `container:` field, or one entry of its
+// `services:` map — GitHub Actions reuses the same shape for both.
+type ContainerSpec struct {
+	Image       string            `yaml:"image"`
+	Env         map[string]string `yaml:"env"`
+	Ports       []string          `yaml:"ports"`
+	Volumes     []string          `yaml:"volumes"`
+	Options     string            `yaml:"options"`
+	Credentials map[string]string `yaml:"credentials"`
+}
+
 // RunDefaults is the `run:` block inside a `defaults:` section.
 type RunDefaults struct {
 	Shell            string `yaml:"shell"`
@@ -67,15 +78,41 @@ type Defaults struct {
 }
 
 type Job struct {
-	Name           string            `yaml:"name"`
-	RunsOn         string            `yaml:"runs-on"`
-	Env            map[string]string `yaml:"env"`
-	Steps          []Step            `yaml:"steps"`
-	Needs          StringOrSlice     `yaml:"needs"`
-	Strategy       *Strategy         `yaml:"strategy"`
-	Outputs        map[string]string `yaml:"outputs"`
-	TimeoutMinutes float64           `yaml:"timeout-minutes"`
-	Defaults       *Defaults         `yaml:"defaults"`
+	Name           string                   `yaml:"name"`
+	RunsOn         string                   `yaml:"runs-on"`
+	Env            map[string]string        `yaml:"env"`
+	Steps          []Step                   `yaml:"steps"`
+	Needs          StringOrSlice            `yaml:"needs"`
+	Strategy       *Strategy                `yaml:"strategy"`
+	Outputs        map[string]string        `yaml:"outputs"`
+	TimeoutMinutes float64                  `yaml:"timeout-minutes"`
+	Defaults       *Defaults                `yaml:"defaults"`
+	RawContainer   yaml.Node                `yaml:"container"`
+	Services       map[string]ContainerSpec `yaml:"services"`
+}
+
+// Container resolves the job's `container:` field, which GitHub Actions
+// allows as either a bare image string or a mapping. Returns nil, nil
+// when the job has no container: field at all.
+func (j *Job) Container() (*ContainerSpec, error) {
+	switch j.RawContainer.Kind {
+	case 0:
+		return nil, nil
+	case yaml.ScalarNode:
+		var image string
+		if err := j.RawContainer.Decode(&image); err != nil {
+			return nil, fmt.Errorf("container: %w", err)
+		}
+		return &ContainerSpec{Image: image}, nil
+	case yaml.MappingNode:
+		spec := &ContainerSpec{}
+		if err := j.RawContainer.Decode(spec); err != nil {
+			return nil, fmt.Errorf("container: %w", err)
+		}
+		return spec, nil
+	default:
+		return nil, fmt.Errorf("container: must be a string or a mapping")
+	}
 }
 
 type Workflow struct {

@@ -140,6 +140,96 @@ jobs:
 	}
 }
 
+func TestJob_Container_Absent(t *testing.T) {
+	job := &Job{}
+	spec, err := job.Container()
+	if err != nil {
+		t.Fatalf("Container() error = %v", err)
+	}
+	if spec != nil {
+		t.Errorf("Container() = %v, want nil for a job with no container: field", spec)
+	}
+}
+
+func TestJob_Container_BareImageString(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: node:20
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Container()
+	if err != nil {
+		t.Fatalf("Container() error = %v", err)
+	}
+	if spec == nil || spec.Image != "node:20" {
+		t.Fatalf("Container() = %+v, want Image=node:20", spec)
+	}
+}
+
+func TestJob_Container_Mapping(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+      env:
+        FOO: bar
+      ports:
+        - "8080:8080"
+      volumes:
+        - "/host/path:/container/path"
+      options: "--cpus 2"
+      credentials:
+        username: myuser
+        password: mypass
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Container()
+	if err != nil {
+		t.Fatalf("Container() error = %v", err)
+	}
+	if spec == nil {
+		t.Fatal("Container() = nil, want a resolved spec")
+	}
+	if spec.Image != "node:20" {
+		t.Errorf("Image = %q, want node:20", spec.Image)
+	}
+	if spec.Env["FOO"] != "bar" {
+		t.Errorf("Env[FOO] = %q, want bar", spec.Env["FOO"])
+	}
+	if len(spec.Ports) != 1 || spec.Ports[0] != "8080:8080" {
+		t.Errorf("Ports = %v, want [8080:8080]", spec.Ports)
+	}
+	if len(spec.Volumes) != 1 || spec.Volumes[0] != "/host/path:/container/path" {
+		t.Errorf("Volumes = %v, want [/host/path:/container/path]", spec.Volumes)
+	}
+	if spec.Options != "--cpus 2" {
+		t.Errorf("Options = %q, want --cpus 2", spec.Options)
+	}
+	if spec.Credentials["username"] != "myuser" || spec.Credentials["password"] != "mypass" {
+		t.Errorf("Credentials = %v, want username=myuser password=mypass", spec.Credentials)
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty
