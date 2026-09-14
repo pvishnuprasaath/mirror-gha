@@ -2,8 +2,22 @@ package engine
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// inputContextKeySanitizer mirrors internal/actions.InputEnv's private
+// transform (uppercase, non-alphanumeric-and-dash becomes "_") —
+// duplicated locally rather than exported/cross-imported, same
+// precedent as requireDocker/requireNetwork being duplicated per
+// package throughout this project. inputs.<name> is nothing but
+// INPUT_<TRANSFORMED_NAME> re-exposed — confirmed against act's
+// getEvaluatorInputs (expression.go:481), not separately-stored state.
+var inputContextKeySanitizer = regexp.MustCompile(`[^A-Z0-9-]`)
+
+func inputEnvKeyFor(name string) string {
+	return "INPUT_" + inputContextKeySanitizer.ReplaceAllString(strings.ToUpper(name), "_")
+}
 
 // StepOutcome records what happened when a step ran, for later steps'
 // `if:` conditions and ${{ steps.<id>.* }} references.
@@ -172,6 +186,11 @@ func (c *Context) resolvePath(path []string) (interface{}, error) {
 			return nil, fmt.Errorf("invalid vars reference: %s", strings.Join(path, "."))
 		}
 		return lookupStringCI(c.Vars, path[1]), nil
+	case "inputs":
+		if len(path) != 2 {
+			return nil, fmt.Errorf("invalid inputs reference: %s", strings.Join(path, "."))
+		}
+		return lookupStringCI(c.Env, inputEnvKeyFor(path[1])), nil
 	default:
 		return nil, fmt.Errorf("unknown context: %s", path[0])
 	}

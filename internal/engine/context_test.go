@@ -63,6 +63,27 @@ func TestResolvePath_StepsOutcomeAndOutputs(t *testing.T) {
 	}
 }
 
+func TestResolvePath_Inputs(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.Env["INPUT_WHO-TO-GREET"] = "mirror-gha"
+
+	got, err := ctx.resolvePath([]string{"inputs", "who-to-greet"})
+	if err != nil {
+		t.Fatalf("resolvePath(inputs.who-to-greet) error = %v", err)
+	}
+	if got != "mirror-gha" {
+		t.Errorf("resolvePath(inputs.who-to-greet) = %v, want %q", got, "mirror-gha")
+	}
+
+	got, err = ctx.resolvePath([]string{"inputs", "not-set"})
+	if err != nil {
+		t.Fatalf("resolvePath(inputs.not-set) error = %v", err)
+	}
+	if got != "" {
+		t.Errorf("resolvePath(inputs.not-set) = %v, want empty string", got)
+	}
+}
+
 func TestCallStatusFunc(t *testing.T) {
 	ctx := NewContext(&Workflow{}, &Job{})
 
