@@ -444,3 +444,52 @@ func TestRunJob_ExtraEnvReachesStepExec(t *testing.T) {
 		t.Errorf(`Env["SOME_EXTRA_VAR"] = %q, want %q`, spec.Env["SOME_EXTRA_VAR"], "extra-value")
 	}
 }
+
+func TestRunJob_PostActionRunsAfterMainStepsWithState(t *testing.T) {
+	workspaceDir := t.TempDir()
+	actionDir := filepath.Join(workspaceDir, "post-action")
+	if err := os.MkdirAll(actionDir, 0o755); err != nil {
+		t.Fatalf("mkdir action dir: %v", err)
+	}
+	actionYML := "name: 'Post Action'\nruns:\n  using: 'node20'\n  main: 'index.js'\n  post: 'post.js'\n"
+	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			{ID: "one", Uses: "./post-action"},
+			{ID: "two", Run: "echo two"},
+		},
+	}
+	// fakeBackend.results feeds Exec calls in call order: step "one"
+	// (main), step "two", then the post action last (post runs after
+	// every top-level step, in reverse order — only one uses: step
+	// here, so reverse order is a single entry).
+	backend := &fakeBackend{results: []runner.StepResult{
+		{ExitCode: 0},
+		{ExitCode: 0},
+		{ExitCode: 0},
+	}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: workspaceDir})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	if len(result.Steps) != 3 {
+		t.Fatalf("Steps = %d entries, want 3 (main x2 + post x1)", len(result.Steps))
+	}
+	postReport := result.Steps[2]
+	if postReport.ID != "one-post" {
+		t.Errorf("Steps[2].ID = %q, want %q", postReport.ID, "one-post")
+	}
+
+	postSpec := backend.lastJob.execSpecs[2]
+	wantArgs := []string{"/mirror-node/bin/node", "/mirror-actions/one/post.js"}
+	if len(postSpec.Args) != 2 || postSpec.Args[0] != wantArgs[0] || postSpec.Args[1] != wantArgs[1] {
+		t.Errorf("post Args = %v, want %v", postSpec.Args, wantArgs)
+	}
+}

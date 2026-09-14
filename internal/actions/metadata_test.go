@@ -155,6 +155,25 @@ runs:
 	}
 }
 
+func TestParseMetadata_PostAction(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "action.yml", `
+name: 'Post Action'
+runs:
+  using: 'node20'
+  main: 'dist/restore/index.js'
+  post: 'dist/save/index.js'
+`)
+
+	meta, err := ParseMetadata(dir)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if meta.Runs.Post != "dist/save/index.js" {
+		t.Errorf("Runs.Post = %q, want %q", meta.Runs.Post, "dist/save/index.js")
+	}
+}
+
 func TestParseMetadata_MissingFileIsError(t *testing.T) {
 	_, err := ParseMetadata(t.TempDir())
 	if err == nil {

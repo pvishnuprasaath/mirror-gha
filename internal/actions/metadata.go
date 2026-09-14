@@ -49,6 +49,8 @@ type ActionOutput struct {
 type ActionRuns struct {
 	Using      string            `yaml:"using"`
 	Main       string            `yaml:"main"`
+	Post       string            `yaml:"post"`
+	PostIf     string            `yaml:"post-if"`
 	Image      string            `yaml:"image"`
 	Entrypoint string            `yaml:"entrypoint"`
 	Args       []string          `yaml:"args"`

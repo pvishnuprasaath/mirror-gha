@@ -10,12 +10,13 @@ import (
 
 // FileSet is the set of temp files GitHub Actions uses for the file-based
 // workflow command protocol (GITHUB_ENV, GITHUB_PATH, GITHUB_OUTPUT,
-// GITHUB_STEP_SUMMARY).
+// GITHUB_STEP_SUMMARY, GITHUB_STATE).
 type FileSet struct {
 	EnvFile     string
 	PathFile    string
 	OutputFile  string
 	SummaryFile string
+	StateFile   string
 }
 
 // CreateFileSet creates empty workflow-command files in dir and returns
@@ -26,8 +27,9 @@ func CreateFileSet(dir string) (*FileSet, error) {
 		PathFile:    filepath.Join(dir, "github_path"),
 		OutputFile:  filepath.Join(dir, "github_output"),
 		SummaryFile: filepath.Join(dir, "github_step_summary"),
+		StateFile:   filepath.Join(dir, "github_state"),
 	}
-	for _, path := range []string{fs.EnvFile, fs.PathFile, fs.OutputFile, fs.SummaryFile} {
+	for _, path := range []string{fs.EnvFile, fs.PathFile, fs.OutputFile, fs.SummaryFile, fs.StateFile} {
 		if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
 			return nil, fmt.Errorf("create %s: %w", path, err)
 		}

@@ -80,7 +80,10 @@ func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context
 		if nestedID == "" {
 			nestedID = fmt.Sprintf("step-%d", i)
 		}
-		report, err := runStep(ctx, childParams, childActx, nestedStep, nestedID)
+		// A nested uses: step's own post action (if any) is discarded
+		// here — composite-nested post actions are a known, accepted
+		// scope limit for now (see runStep's doc comment).
+		report, _, err := runStep(ctx, childParams, childActx, nestedStep, nestedID)
 		if err != nil {
 			return "", nil, "", "", fmt.Errorf("nested step %s: %w", nestedID, err)
 		}

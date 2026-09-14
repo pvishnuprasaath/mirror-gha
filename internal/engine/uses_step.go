@@ -23,6 +23,7 @@ type usesStepPlan struct {
 	Env       map[string]string
 	Docker    *runner.DockerActionSpec
 	Composite *compositeInvocation
+	Post      *postAction
 }
 
 // prepareUsesStep resolves and stages a uses: step's action. actx is used
@@ -107,7 +108,20 @@ func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step S
 		env := actions.InputEnv(metadata, with)
 		env["GITHUB_ACTION_PATH"] = containerActionPath
 		args := []string{actions.ContainerNodePath + "/bin/node", containerActionPath + "/" + metadata.Runs.Main}
-		return usesStepPlan{Args: args, Env: env}, nil
+
+		plan := usesStepPlan{Args: args, Env: env}
+		if metadata.Runs.Post != "" {
+			postEnv := map[string]string{}
+			for k, v := range env {
+				postEnv[k] = v
+			}
+			plan.Post = &postAction{
+				Args:   []string{actions.ContainerNodePath + "/bin/node", containerActionPath + "/" + metadata.Runs.Post},
+				Env:    postEnv,
+				PostIf: metadata.Runs.PostIf,
+			}
+		}
+		return plan, nil
 
 	case metadata.Runs.Using == "docker":
 		image, err := actions.ResolveDockerImage(ctx, hostSourceDir, step.Uses, metadata.Runs)
