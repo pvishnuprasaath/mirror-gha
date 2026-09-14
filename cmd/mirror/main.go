@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"os"
@@ -107,6 +108,24 @@ func parseVarFile(path string) (map[string]string, error) {
 		vars[name] = value
 	}
 	return vars, nil
+}
+
+// fakeRuntimeToken builds a JWT-shaped (but unsigned and unverified)
+// ACTIONS_RUNTIME_TOKEN value. Found necessary via real end-to-end
+// testing: @actions/upload-artifact@v4's bundled client runs the real
+// token through a jwt-decode library before making any request — a
+// plain placeholder string (no "." separators) makes
+// `token.split(".")[1]` return undefined, crashing with "Invalid token
+// specified: Cannot read properties of undefined (reading 'replace')"
+// before a single HTTP request is even made. Neither mirror-gha's cache
+// server nor its artifact server ever validates this token, so any
+// JWT-shaped value works — only the shape (three dot-separated
+// base64url segments, with the payload segment decoding to valid JSON)
+// needs to be real.
+func fakeRuntimeToken() string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"scp":"Actions.Results:1:1","exp":9999999999}`))
+	return header + "." + payload + ".mirror-gha-local-signature"
 }
 
 func parseLocalRepositoryOverrides(values []string) (map[string]string, error) {
@@ -239,7 +258,7 @@ func runCommand(path string, mode runMode) int {
 		defer cacheSrv.Stop(context.Background())
 
 		extraEnv["ACTIONS_CACHE_URL"] = fmt.Sprintf("http://host.docker.internal:%d/", cacheSrv.Port())
-		extraEnv["ACTIONS_RUNTIME_TOKEN"] = "mirror-gha-local-token"
+		extraEnv["ACTIONS_RUNTIME_TOKEN"] = fakeRuntimeToken()
 
 		artifactStore, artifactRoot, err := artifactserver.NewTempStore()
 		if err != nil {

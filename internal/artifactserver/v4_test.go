@@ -3,9 +3,11 @@ package artifactserver
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -53,15 +55,18 @@ func TestV4_FullRoundTrip_CreateUploadFinalizeListGetURLDownloadDelete(t *testin
 		t.Fatalf("upload status = %d, want 201", uploadResp.StatusCode)
 	}
 
-	// Finalize.
-	finalizeBody, _ := json.Marshal(map[string]interface{}{"name": "my-v4-artifact", "size": len(content)})
+	// Finalize. size is sent as a JSON STRING, not a number — confirmed
+	// for real against the actual actions/upload-artifact@v4 client:
+	// protojson encodes int64/uint64 fields as decimal strings to avoid
+	// precision loss in JS, and the real client does exactly this.
+	finalizeBody, _ := json.Marshal(map[string]interface{}{"name": "my-v4-artifact", "size": fmt.Sprintf("%d", len(content))})
 	finalizeResp, err := http.Post(ts.URL+v4RouteBase+"/FinalizeArtifact", "application/json", bytes.NewReader(finalizeBody))
 	if err != nil {
 		t.Fatalf("FinalizeArtifact error = %v", err)
 	}
 	var finalizeRespBody struct {
 		OK         bool  `json:"ok"`
-		ArtifactID int64 `json:"artifactId"`
+		ArtifactID int64 `json:"artifactId,string"`
 	}
 	if err := json.NewDecoder(finalizeResp.Body).Decode(&finalizeRespBody); err != nil {
 		t.Fatalf("decode FinalizeArtifact response: %v", err)
@@ -79,7 +84,7 @@ func TestV4_FullRoundTrip_CreateUploadFinalizeListGetURLDownloadDelete(t *testin
 	var listRespBody struct {
 		Artifacts []struct {
 			Name string `json:"name"`
-			Size int64  `json:"size"`
+			Size int64  `json:"size,string"`
 		} `json:"artifacts"`
 	}
 	if err := json.NewDecoder(listResp.Body).Decode(&listRespBody); err != nil {
@@ -139,6 +144,50 @@ func TestV4_FullRoundTrip_CreateUploadFinalizeListGetURLDownloadDelete(t *testin
 	defer afterDeleteResp.Body.Close()
 	if afterDeleteResp.StatusCode != http.StatusNotFound {
 		t.Errorf("post-delete download status = %d, want 404", afterDeleteResp.StatusCode)
+	}
+}
+
+func TestV4_UploadArtifact_BlocklistCompIsNoOp(t *testing.T) {
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	mux := http.NewServeMux()
+	registerV4Routes(mux, store)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	realContent := []byte("real zip bytes")
+	uploadReq, _ := http.NewRequest(http.MethodPut, ts.URL+v4RouteBase+"/UploadArtifact?artifactName=blocklist-test&comp=block", bytes.NewReader(realContent))
+	uploadResp, err := http.DefaultClient.Do(uploadReq)
+	if err != nil {
+		t.Fatalf("comp=block upload error = %v", err)
+	}
+	uploadResp.Body.Close()
+
+	// The real client's final comp=blocklist request carries an XML
+	// manifest, not content — it must NOT overwrite the real bytes
+	// already written by the comp=block request above.
+	manifestReq, _ := http.NewRequest(http.MethodPut, ts.URL+v4RouteBase+"/UploadArtifact?artifactName=blocklist-test&comp=blocklist", strings.NewReader("<BlockList>fake manifest</BlockList>"))
+	manifestResp, err := http.DefaultClient.Do(manifestReq)
+	if err != nil {
+		t.Fatalf("comp=blocklist request error = %v", err)
+	}
+	manifestResp.Body.Close()
+	if manifestResp.StatusCode != http.StatusCreated {
+		t.Fatalf("comp=blocklist status = %d, want 201", manifestResp.StatusCode)
+	}
+
+	path, err := store.Resolve(v4BlobRel("blocklist-test"))
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read blob: %v", err)
+	}
+	if string(data) != string(realContent) {
+		t.Errorf("blob content = %q, want %q (comp=blocklist must not overwrite it)", data, realContent)
 	}
 }
 
