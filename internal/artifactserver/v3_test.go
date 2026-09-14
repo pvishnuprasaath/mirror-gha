@@ -87,8 +87,11 @@ func TestV3_FullRoundTrip_ReserveUploadFinalizeListDownload(t *testing.T) {
 		t.Fatalf("list = %+v, want one entry named my-artifact", listBody)
 	}
 
-	// Download list (container item listing).
-	downloadListResp, err := http.Get(listBody.Value[0].FileContainerResourceURL)
+	// Download list (container item listing) — the real
+	// actions/download-artifact@v3 client always passes an itemPath
+	// query param naming the artifact it wants, not just the bare
+	// container URL.
+	downloadListResp, err := http.Get(listBody.Value[0].FileContainerResourceURL + "?itemPath=my-artifact")
 	if err != nil {
 		t.Fatalf("download list error = %v", err)
 	}
@@ -105,6 +108,12 @@ func TestV3_FullRoundTrip_ReserveUploadFinalizeListDownload(t *testing.T) {
 	downloadListResp.Body.Close()
 	if len(downloadListBody.Value) != 1 || downloadListBody.Value[0].ItemType != "file" {
 		t.Fatalf("download list = %+v, want one file entry", downloadListBody)
+	}
+	// The "path" must be prefixed by the artifact name (my-artifact),
+	// not the run id — this is what a real client uses to reconstruct
+	// the local destination filename.
+	if downloadListBody.Value[0].Path != "my-artifact/file.txt" {
+		t.Errorf("path = %q, want %q", downloadListBody.Value[0].Path, "my-artifact/file.txt")
 	}
 
 	// Download the actual file.

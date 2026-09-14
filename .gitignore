@@ -37,3 +37,8 @@ marker.txt
 
 # Created at the repo root by running examples/workflows/uses-cache.yml
 cache-data/
+
+# Created at the repo root by running examples/workflows/uses-artifact-v3.yml
+# and uses-artifact-v4.yml
+out/
+downloaded/

@@ -125,6 +125,17 @@ func v3DownloadList(store *Store) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// The "path" a real v3 client expects is prefixed by the artifact
+		// name (itemPath here), NOT the run id (container) — found via
+		// real end-to-end testing against actions/download-artifact@v3:
+		// using container (e.g. "1") produced paths like "1/greeting.txt"
+		// instead of "greeting-v3/greeting.txt", and the real client
+		// silently reported "No downloadable files were found" rather
+		// than erroring, making this easy to miss without a real client.
+		pathPrefix := itemPath
+		if pathPrefix == "" {
+			pathPrefix = filepath.Base(container)
+		}
 		resp := containerItemResponse{}
 		filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil || d.IsDir() {
@@ -133,7 +144,7 @@ func v3DownloadList(store *Store) http.HandlerFunc {
 			rel, _ := filepath.Rel(dir, path)
 			displayName := strings.TrimSuffix(rel, ".gz__")
 			resp.Value = append(resp.Value, containerItem{
-				Path:            filepath.ToSlash(filepath.Join(filepath.Base(container), displayName)),
+				Path:            filepath.ToSlash(filepath.Join(pathPrefix, displayName)),
 				ItemType:        "file",
 				ContentLocation: fmt.Sprintf("http://%s/artifact/%s", r.Host, filepath.ToSlash(filepath.Join(base, rel))),
 			})
