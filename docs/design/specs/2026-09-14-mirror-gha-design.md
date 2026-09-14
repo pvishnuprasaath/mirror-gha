@@ -176,6 +176,15 @@ runner-image drift alerts.
   OIDC test harness, checks-publishing, secrets vault UI, watch-mode daemon,
   advanced dashboard (diffing, search, runner-image drift alerts).
 
+  **Decision (2026-09-14):** act already ships basic watch-mode
+  (`--watch`, re-run on file change) for free, which put this Pro-tier
+  placement in tension with the incumbent. Deliberately kept watch-mode
+  Pro-only anyway — the bet is that mirror's free-tier fidelity
+  advantages (accurate `needs`/`matrix`, real job-container lifecycle,
+  actionlint-grade expressions) carry the free tier regardless of this
+  one feature being weaker than act's. Revisit if free-tier adoption
+  data suggests this is actually costing conversions.
+
 ## Error handling / fidelity-gap surfacing
 
 Core rule: **never silently degrade.** Anywhere real GitHub behavior can't be
