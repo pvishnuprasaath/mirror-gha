@@ -1,0 +1,19 @@
+# Demonstrates uses: with a real Marketplace action — actions/hello-world-javascript-action
+# is GitHub's own small, stable, official demo JS action. Requires network
+# access (fetches the action's source from GitHub on first run, then caches it).
+#
+# Try it:
+#   mirror run examples/workflows/uses-marketplace-action.yml
+name: uses marketplace action
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: actions/hello-world-javascript-action@v1
+        with:
+          who-to-greet: 'mirror-gha'
+      - name: use the output
+        run: 'echo "Action ran at: ${{ steps.greet.outputs.time }}"'

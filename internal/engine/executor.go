@@ -163,6 +163,17 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		if err != nil {
 			return nil, fmt.Errorf("parse outputs for step %s: %w", id, err)
 		}
+		// Many real-world actions (including GitHub's own
+		// actions/hello-world-javascript-action) still emit outputs via
+		// the deprecated stdout-based workflow commands rather than the
+		// $GITHUB_OUTPUT file — real GitHub Actions parses both, so this
+		// does too. The file-based outputs above win on key conflicts,
+		// since that's the current, non-deprecated mechanism.
+		for k, v := range commands.ParseLegacyOutputs(stepResult.Stdout) {
+			if _, exists := outputs[k]; !exists {
+				outputs[k] = v
+			}
+		}
 		envUpdates, err := commands.ParseKeyValueFile(fileSet.EnvFile)
 		if err != nil {
 			return nil, fmt.Errorf("parse env updates for step %s: %w", id, err)

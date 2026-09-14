@@ -213,6 +213,40 @@ func TestRunJob_ComputesOutputsFromJobOutputsField(t *testing.T) {
 	}
 }
 
+func TestRunJob_LegacyStdoutOutputsFlowToLaterSteps(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			// Simulates an action still using the deprecated stdout-based
+			// workflow command (like actions/hello-world-javascript-action@v1)
+			// instead of writing to $GITHUB_OUTPUT.
+			{ID: "emit", Run: "echo legacy"},
+			{ID: "use", Run: "echo got ${{ steps.emit.outputs.time }}"},
+		},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{
+		{ExitCode: 0, Stdout: "Hello!\n##[set-output name=time;]13:31:15 GMT+0000\n"},
+		{ExitCode: 0, Stdout: "got 13:31:15 GMT+0000\n"},
+	}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if result.Conclusion != "success" {
+		t.Errorf("Conclusion = %q, want %q", result.Conclusion, "success")
+	}
+	// The real assertion: the second step's *substituted command* must
+	// contain the value the first step emitted via the legacy stdout
+	// convention — proving RunJob actually parsed it, not just that
+	// nothing errored.
+	secondCommand := backend.lastJob.execSpecs[1].Command
+	if secondCommand != "echo got 13:31:15 GMT+0000" {
+		t.Errorf("second step's command = %q, want %q", secondCommand, "echo got 13:31:15 GMT+0000")
+	}
+}
+
 func TestRunJob_OutputsFlowToLaterSteps(t *testing.T) {
 	wf := &Workflow{Name: "test"}
 	job := &Job{
