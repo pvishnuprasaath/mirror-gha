@@ -68,10 +68,20 @@ execution path):
    "not available on this host" error rather than silently skipping.
 
 3. **Actions Runtime** (`internal/actions`) — resolves `uses:` references
-   (Marketplace, local `./path`, `docker://`). Executes JS actions (bundles
-   the Node version per the action's `runs.using`), Docker actions
-   (builds/pulls the action's own image), composite actions (recursively
-   expands into the step graph). All three supported from day one.
+   (Marketplace, local `./path`, `docker://`). Executes JS actions, Docker
+   actions (builds/pulls the action's own image), composite actions
+   (recursively expands into the step graph). All three supported from day
+   one. **JS actions require explicit Node runtime resolution, not just
+   "execute JS"**: an action's `runs.using` names a concrete version
+   (`node16`, `node20`, etc.), and the job container must have that
+   version available — act's own resolution path (`GetNodeToolFullPath`)
+   is the reference implementation to follow here; a container image with
+   only one Node version baked in will silently misbehave for actions
+   pinned to a different one.
+
+   Composite actions must also each get their own nested execution
+   context — a composite action's steps can themselves `uses:` further
+   actions, so this is a recursive expansion, not a flat inline splice.
 
 4. **GitHub API Shim** — implements `GITHUB_TOKEN`-scoped REST endpoints,
    plus checks/deployment/OIDC endpoints. **Hybrid network mode**: without a
@@ -109,9 +119,21 @@ mirror run [workflow.yml] [--event push --payload event.json]
   -> Dashboard, if open, reflects the same run-store (live tail or replay)
 ```
 
-Artifacts/cache are real local filesystem stores keyed the same way
-`actions/upload-artifact` and `actions/cache` key theirs (name + path +
-hash), so those actions work unmodified against the shim.
+**Artifacts and cache must be real local HTTP servers, not a filesystem
+shim.** Comparing against act's `pkg/artifacts/` and `pkg/artifactcache/`
+confirmed how this actually has to work: `actions/upload-artifact` and
+`actions/cache` don't read/write files directly — they call GitHub's real
+Artifact/Cache REST API, at a URL the runner injects via
+`ACTIONS_RUNTIME_URL` (and a matching runtime token) as job-scoped
+environment variables. To work unmodified, this project's engine must run
+a local HTTP server implementing that same API surface (upload/download/
+finalize for artifacts; get/reserve/save for cache) and inject its own
+`ACTIONS_RUNTIME_URL` pointing at it — a plain "watch the filesystem"
+shim would not be intercepted by those actions at all, since they never
+touch the filesystem directly for this. The storage backing that server
+can still be the local filesystem, keyed the same way GitHub's real API
+keys artifacts/cache entries (name + path + hash) — that part of the
+original design holds, only the transport layer needed correcting.
 
 ## Phased feature-parity matrix
 
