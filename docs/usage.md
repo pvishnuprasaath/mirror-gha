@@ -27,6 +27,21 @@ Point it at any workflow file:
 ./bin/mirror run .github/workflows/ci.yml
 ```
 
+## Introspection flags
+
+Three read-only modes for understanding a workflow before actually
+running it — none of them touch Docker:
+
+```bash
+mirror run --list workflow.yml     # every job (and matrix combination), its runs-on and needs
+mirror run --graph workflow.yml    # jobs in dependency order, with needs: indented underneath
+mirror run --dryrun workflow.yml   # runs the real needs/matrix/if orchestration, but every
+                                    # step reports success without actually executing —
+                                    # useful for checking a workflow's shape/logic quickly.
+                                    # An unsupported runs-on still errors even in dry-run mode,
+                                    # since "would this even run here" is what it's for.
+```
+
 ## What's supported today
 
 `mirror` executes a job's `run:` steps in one real, long-lived Ubuntu

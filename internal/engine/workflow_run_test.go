@@ -169,9 +169,9 @@ func TestTopoSortJobs_CircularDependencyError(t *testing.T) {
 		"a": {Needs: StringOrSlice{"b"}},
 		"b": {Needs: StringOrSlice{"a"}},
 	}
-	_, err := topoSortJobs(jobs)
+	_, err := TopoSortJobs(jobs)
 	if err == nil {
-		t.Fatal("topoSortJobs() error = nil, want a circular dependency error")
+		t.Fatal("TopoSortJobs() error = nil, want a circular dependency error")
 	}
 }
 
@@ -179,8 +179,8 @@ func TestTopoSortJobs_UnknownNeedError(t *testing.T) {
 	jobs := map[string]Job{
 		"a": {Needs: StringOrSlice{"ghost"}},
 	}
-	_, err := topoSortJobs(jobs)
+	_, err := TopoSortJobs(jobs)
 	if err == nil {
-		t.Fatal("topoSortJobs() error = nil, want an unknown-job error")
+		t.Fatal("TopoSortJobs() error = nil, want an unknown-job error")
 	}
 }

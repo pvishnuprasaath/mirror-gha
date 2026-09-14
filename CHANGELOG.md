@@ -7,6 +7,17 @@ Unreleased until the first `v0.1.0`.
 
 ## [Unreleased]
 
+### Added
+
+- `mirror run --list` — every job (and matrix combination), its
+  `runs-on` and `needs:`, without running anything.
+- `mirror run --graph` — jobs in dependency order, `needs:` indented
+  underneath.
+- `mirror run --dryrun` — runs the real needs/matrix/if orchestration
+  end to end, but every step reports success without executing. Still
+  validates `runs-on` support, so an unsupported runner errors even in
+  dry-run mode.
+
 ### Fixed
 
 - **Job container lifecycle.** Comparing against `nektos/act`'s source
@@ -15,6 +26,9 @@ Unreleased until the first `v0.1.0`.
   Actions both work), instead of a fresh `docker run --rm` per step.
   Filesystem state — checked-out files, installed packages, `PATH`
   changes — now persists step to step within a job.
+- **Temp directory leak.** Every job run left its host-side workflow-command
+  files directory behind in the OS temp dir forever, since `Stop()` only
+  removed the container. Now cleaned up alongside the container.
 
 ### Added
 

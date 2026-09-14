@@ -112,6 +112,25 @@ func TestLinuxDockerBackend_Exec_StatePersistsAcrossSteps(t *testing.T) {
 	}
 }
 
+func TestLinuxDockerBackend_Stop_RemovesFilesRoot(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	filesRoot := job.FilesRoot()
+
+	if err := job.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	if _, err := os.Stat(filesRoot); !os.IsNotExist(err) {
+		t.Errorf("FilesRoot %s still exists after Stop(), want it removed (stat err = %v)", filesRoot, err)
+	}
+}
+
 func TestLinuxDockerBackend_Exec_RejectsFilesDirOutsideRoot(t *testing.T) {
 	requireDocker(t)
 

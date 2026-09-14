@@ -114,8 +114,16 @@ func (j *dockerJob) Stop(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "docker", "rm", "-f", j.containerID)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("stop job container %s: %w: %s", j.containerID, err, stderr.String())
+	stopErr := cmd.Run()
+	if stopErr != nil {
+		stopErr = fmt.Errorf("stop job container %s: %w: %s", j.containerID, stopErr, stderr.String())
 	}
-	return nil
+	// Always attempt cleanup of the host-side files root, even if the
+	// container removal above failed — it's a plain temp directory, not
+	// something Docker knows about, and leaving it behind on every job
+	// run silently accumulates in the OS temp directory forever.
+	if err := os.RemoveAll(j.hostFilesRoot); err != nil && stopErr == nil {
+		return fmt.Errorf("remove job files root %s: %w", j.hostFilesRoot, err)
+	}
+	return stopErr
 }

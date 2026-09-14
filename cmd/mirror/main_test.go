@@ -15,8 +15,52 @@ func requireDocker(t *testing.T) {
 func TestRunCommand_EndToEnd(t *testing.T) {
 	requireDocker(t)
 
-	exitCode := runCommand("testdata/simple.yml")
+	exitCode := runCommand("testdata/simple.yml", runMode{})
 	if exitCode != 0 {
 		t.Fatalf("runCommand() = %d, want 0", exitCode)
+	}
+}
+
+func TestRunCommand_List(t *testing.T) {
+	// --list never touches Docker, so no requireDocker() guard needed.
+	exitCode := runCommand("testdata/simple.yml", runMode{list: true})
+	if exitCode != 0 {
+		t.Fatalf("runCommand(list) = %d, want 0", exitCode)
+	}
+}
+
+func TestRunCommand_Graph(t *testing.T) {
+	exitCode := runCommand("testdata/simple.yml", runMode{graph: true})
+	if exitCode != 0 {
+		t.Fatalf("runCommand(graph) = %d, want 0", exitCode)
+	}
+}
+
+func TestRunCommand_DryRun(t *testing.T) {
+	// --dryrun still validates runs-on support but never calls Docker.
+	exitCode := runCommand("testdata/simple.yml", runMode{dryRun: true})
+	if exitCode != 0 {
+		t.Fatalf("runCommand(dryrun) = %d, want 0", exitCode)
+	}
+}
+
+func TestRunCommand_DryRunRejectsUnsupportedRunner(t *testing.T) {
+	exitCode := runCommand("testdata/unsupported-runner.yml", runMode{dryRun: true})
+	if exitCode != 1 {
+		t.Fatalf("runCommand(dryrun) on an unsupported runner = %d, want 1", exitCode)
+	}
+}
+
+func TestRunMain_ListFlag(t *testing.T) {
+	exitCode := runMain([]string{"--list", "testdata/simple.yml"})
+	if exitCode != 0 {
+		t.Fatalf("runMain([--list, ...]) = %d, want 0", exitCode)
+	}
+}
+
+func TestRunMain_NoWorkflowArgument(t *testing.T) {
+	exitCode := runMain([]string{"--list"})
+	if exitCode != 1 {
+		t.Fatalf("runMain([--list]) with no workflow path = %d, want 1", exitCode)
 	}
 }

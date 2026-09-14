@@ -55,6 +55,14 @@ Then point it at a real workflow:
 ./bin/mirror run .github/workflows/ci.yml
 ```
 
+Check what a workflow would do before actually running it:
+
+```bash
+./bin/mirror run --list examples/workflows/matrix-build.yml   # jobs + matrix combinations
+./bin/mirror run --graph examples/workflows/job-dependencies.yml  # dependency order
+./bin/mirror run --dryrun .github/workflows/ci.yml             # full needs/matrix/if logic, no Docker
+```
+
 ## Usage
 
 Full usage reference, what's supported today, what isn't yet, and best

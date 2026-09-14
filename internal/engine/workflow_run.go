@@ -30,7 +30,7 @@ type BackendSelector func(runsOn string) (runner.Backend, error)
 // job's result/outputs to dependents via the `needs` context. A job whose
 // `needs:` didn't all succeed is reported as "skipped", not run.
 func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelector) (*WorkflowResult, error) {
-	order, err := topoSortJobs(wf.Jobs)
+	order, err := TopoSortJobs(wf.Jobs)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 		for _, combo := range combos {
 			if stopStartingNew {
 				allSteps = append(allSteps, StepReport{
-					Name:       name + matrixSuffix(combo),
+					Name:       name + MatrixSuffix(combo),
 					Conclusion: "skipped",
 				})
 				continue
@@ -80,7 +80,7 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 
 			backend, err := selectBackend(job.RunsOn)
 			if err != nil {
-				return nil, fmt.Errorf("job %s%s: %w", name, matrixSuffix(combo), err)
+				return nil, fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
 			}
 
 			runCtx := ctx
@@ -97,7 +97,7 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 				cancel()
 			}
 			if err != nil {
-				return nil, fmt.Errorf("job %s%s: %w", name, matrixSuffix(combo), err)
+				return nil, fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
 			}
 
 			allSteps = append(allSteps, jr.Steps...)
@@ -118,10 +118,10 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 	return result, nil
 }
 
-// topoSortJobs orders jobs so every job appears after everything it
+// TopoSortJobs orders jobs so every job appears after everything it
 // `needs:`. Job names are visited in sorted order so the result is
 // deterministic across runs of the same workflow.
-func topoSortJobs(jobs map[string]Job) ([]string, error) {
+func TopoSortJobs(jobs map[string]Job) ([]string, error) {
 	const (
 		unvisited = 0
 		visiting  = 1
@@ -170,7 +170,7 @@ func topoSortJobs(jobs map[string]Job) ([]string, error) {
 	return order, nil
 }
 
-func matrixSuffix(combo MatrixCombination) string {
+func MatrixSuffix(combo MatrixCombination) string {
 	if len(combo) == 0 {
 		return ""
 	}
