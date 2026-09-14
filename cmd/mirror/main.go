@@ -34,10 +34,10 @@ func main() {
 	}
 }
 
-// runCommand parses and executes every job in the workflow at path,
-// printing per-step results. It returns the process exit code: 0 if every
-// job succeeded, 1 otherwise — split out from main() so it's directly
-// testable without spawning a subprocess.
+// runCommand parses the workflow at path and runs every job in dependency
+// order (needs:), printing per-step results. It returns the process exit
+// code: 0 if every job succeeded, 1 otherwise — split out from main() so
+// it's directly testable without spawning a subprocess.
 func runCommand(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -51,21 +51,16 @@ func runCommand(path string) int {
 		return 1
 	}
 
-	for name, job := range wf.Jobs {
-		backend, err := runner.SelectBackend(job.RunsOn)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "job %s: %v\n", name, err)
-			return 1
-		}
+	result, err := engine.RunWorkflow(context.Background(), wf, runner.SelectBackend)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
 
-		job := job
-		result, err := engine.RunJob(context.Background(), wf, &job, backend)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "job %s: %v\n", name, err)
-			return 1
-		}
-
-		for _, s := range result.Steps {
+	overallExit := 0
+	for _, name := range result.Order {
+		jr := result.Jobs[name]
+		for _, s := range jr.Steps {
 			fmt.Printf("[%s] %s: %s\n", name, s.Name, s.Conclusion)
 			if s.Stdout != "" {
 				fmt.Print(s.Stdout)
@@ -74,13 +69,12 @@ func runCommand(path string) int {
 				fmt.Fprint(os.Stderr, s.Stderr)
 			}
 		}
-
-		if result.Conclusion != "success" {
-			return 1
+		if jr.Conclusion == "failure" {
+			overallExit = 1
 		}
 	}
 
-	return 0
+	return overallExit
 }
 
 func printUsage() {

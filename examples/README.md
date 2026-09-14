@@ -15,12 +15,14 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`output-passing.yml`](workflows/output-passing.yml) | A step writing to `$GITHUB_OUTPUT`, read back by a later step via `steps.<id>.outputs.<name>` |
 | [`shared-state.yml`](workflows/shared-state.yml) | All steps in a job share one environment — a file written by step 1 is readable by step 2, matching real GitHub Actions |
 | [`expression-functions.yml`](workflows/expression-functions.yml) | Built-in expression functions (`startsWith`, `format`) and real `\|\|` short-circuit default-value semantics |
+| [`job-dependencies.yml`](workflows/job-dependencies.yml) | Multi-job `needs:` — a `deploy` job waits for `build` and reads its declared job output via the `needs` context |
+| [`matrix-build.yml`](workflows/matrix-build.yml) | `strategy.matrix` — the job runs once per axis value, each with its own `matrix` context |
 
 ## What's not shown here (yet)
 
 These examples deliberately stick to what's actually implemented today.
-Multi-job dependencies (`needs:`), matrix builds, `uses:` actions (JS,
-Docker, or composite), artifacts, and caching aren't supported yet — see
+`uses:` actions (JS, Docker, or composite), artifacts, caching, matrix
+`include`/`exclude`, and Windows/macOS runners aren't supported yet — see
 [the roadmap](../docs/design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
 for what's coming and in what order. Workflow files using those features
 will fail with a clear "not supported yet" error rather than silently

@@ -51,6 +51,26 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
 - **Step-to-step output passing** — the real `$GITHUB_OUTPUT` /
   `$GITHUB_ENV` / `$GITHUB_PATH` / `$GITHUB_STEP_SUMMARY` file protocol,
   the same one GitHub Actions itself uses, not a simulated approximation.
+- **Multi-job workflows with `needs:`** — jobs run in dependency order; a
+  job whose `needs:` didn't all succeed is reported `skipped`, not run. A
+  job's declared `outputs:` are available to dependents via
+  `needs.<job>.outputs.<name>` and `needs.<job>.result`.
+- **`strategy.matrix`** — a job with a matrix runs once per combination of
+  its axes, each with its own `matrix.<key>` context. `fail-fast`
+  (defaults to `true`, matching GitHub Actions) stops starting new
+  combinations after the first failure. `matrix.include`/`exclude` are
+  parsed but rejected with a clear error rather than approximated — their
+  real merge semantics are fiddly enough that guessing wrong would be
+  worse than refusing.
+- **`timeout-minutes`** at both job and step level.
+- **`defaults.run.shell` / `defaults.run.working-directory`** at workflow
+  and job level, with the real GitHub Actions precedence: step overrides
+  job defaults, which override workflow defaults.
+- **A local-only `vars` context** — there's no repository/organization
+  variable store to read from yet (that's part of the GitHub API shim,
+  not built), so `vars.*` currently just resolves to nothing unless a
+  future CLI flag populates it. Documented here so it's clear this is a
+  stub, not a silent no-op you'd have to discover by trial and error.
 
 See [`examples/`](../examples/) for a runnable demonstration of each of
 these.
@@ -63,12 +83,12 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Multi-job workflows with `needs:` dependencies
-- `strategy.matrix` builds
 - `uses:` actions — JS, Docker, or composite (Marketplace actions, `./local`
   actions, `docker://` actions)
 - Artifacts (`actions/upload-artifact` / `download-artifact`) and caching
   (`actions/cache`)
+- `matrix.include` / `matrix.exclude`
+- `services:` and `container:` job fields
 - Windows and macOS runners (`windows-latest`, `macos-latest`) — these
   return a clear error naming the limitation, not a silent wrong result
 - A dashboard UI
@@ -87,9 +107,9 @@ for the order these are being built in.
   bundles by default) may behave differently locally until that
   fidelity work lands.
 - **Use it for the fast, iterative loop** — testing a shell-script step,
-  a conditional, or output-wiring change without waiting on a real CI
-  run — not yet as a full replacement for CI on workflows using actions,
-  matrices, or multi-job dependencies.
+  a conditional, matrix, or multi-job dependency change without waiting
+  on a real CI run — not yet as a full replacement for CI on workflows
+  that use `uses:` actions, artifacts, or caching.
 - **File an issue if a `run:`-only, single-job workflow behaves
   differently locally than it does on GitHub Actions.** That's squarely
   in scope today and is a real bug, not a known gap.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"mirror-gha/internal/commands"
 	"mirror-gha/internal/runner"
@@ -11,8 +12,9 @@ import (
 
 // JobResult is the outcome of running every step in a job.
 type JobResult struct {
-	Conclusion string // "success" or "failure"
+	Conclusion string // "success", "failure", or "skipped"
 	Steps      []StepReport
+	Outputs    map[string]string
 }
 
 // StepReport is the per-step record inside a JobResult.
@@ -25,16 +27,31 @@ type StepReport struct {
 	Stderr     string
 }
 
+// JobRunOptions carries the parts of a job's execution context that come
+// from the surrounding workflow (a multi-job DAG's `needs:` outcomes, one
+// matrix combination, and any locally-supplied `vars`) rather than the job
+// definition itself.
+type JobRunOptions struct {
+	Needs  map[string]JobOutcome
+	Matrix MatrixCombination
+	Vars   map[string]string
+}
+
 // RunJob executes every step of job in order against backend, evaluating
 // `if:` conditions, substituting ${{ }} expressions in `run:` commands, and
-// honoring `continue-on-error`. It stops at the first unhandled failure.
+// honoring `continue-on-error`. It stops starting new steps at the first
+// unhandled failure, but always computes job.Outputs from whatever steps
+// did run before returning.
 //
 // All steps run inside the same job-scoped environment (one container for
 // the whole job, not one per step) so filesystem state — checked-out
 // files, installed packages, PATH changes — persists step to step, the
 // same way real GitHub Actions and act both work.
-func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend) (*JobResult, error) {
+func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend, opts JobRunOptions) (*JobResult, error) {
 	actx := NewContext(wf, job)
+	actx.Needs = opts.Needs
+	actx.Matrix = opts.Matrix
+	actx.Vars = opts.Vars
 	result := &JobResult{Conclusion: "success"}
 
 	runnerJob, err := backend.StartJob(ctx)
@@ -83,13 +100,22 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend)
 			env[k] = v
 		}
 
-		stepResult, err := runnerJob.Exec(ctx, runner.StepSpec{
+		stepCtx := ctx
+		var cancel context.CancelFunc
+		if step.TimeoutMinutes > 0 {
+			stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMinutes*float64(time.Minute)))
+		}
+
+		stepResult, err := runnerJob.Exec(stepCtx, runner.StepSpec{
 			Command:          command,
-			Shell:            step.Shell,
+			Shell:            effectiveShell(step, job, wf),
 			Env:              env,
-			WorkingDirectory: step.WorkingDirectory,
+			WorkingDirectory: effectiveWorkingDirectory(step, job, wf),
 			FilesDir:         filesDir,
 		})
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("run step %s: %w", id, err)
 		}
@@ -123,9 +149,45 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend)
 
 		if conclusion == "failure" && !step.ContinueOnError {
 			result.Conclusion = "failure"
-			return result, nil
+			break
 		}
 	}
 
+	outputs := map[string]string{}
+	for name, expr := range job.Outputs {
+		val, err := SubstituteExpressions(expr, actx)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate job output %q: %w", name, err)
+		}
+		outputs[name] = val
+	}
+	result.Outputs = outputs
+
 	return result, nil
+}
+
+func effectiveShell(step Step, job *Job, wf *Workflow) string {
+	if step.Shell != "" {
+		return step.Shell
+	}
+	if job.Defaults != nil && job.Defaults.Run.Shell != "" {
+		return job.Defaults.Run.Shell
+	}
+	if wf.Defaults != nil && wf.Defaults.Run.Shell != "" {
+		return wf.Defaults.Run.Shell
+	}
+	return ""
+}
+
+func effectiveWorkingDirectory(step Step, job *Job, wf *Workflow) string {
+	if step.WorkingDirectory != "" {
+		return step.WorkingDirectory
+	}
+	if job.Defaults != nil && job.Defaults.Run.WorkingDirectory != "" {
+		return job.Defaults.Run.WorkingDirectory
+	}
+	if wf.Defaults != nil && wf.Defaults.Run.WorkingDirectory != "" {
+		return wf.Defaults.Run.WorkingDirectory
+	}
+	return ""
 }

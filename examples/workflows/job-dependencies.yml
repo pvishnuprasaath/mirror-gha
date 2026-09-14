@@ -1,0 +1,23 @@
+# Demonstrates a multi-job workflow: `build` runs first, `deploy` waits
+# for it via `needs:`, and reads `build`'s declared job output through the
+# `needs` context.
+#
+# Try it:
+#   mirror run examples/workflows/job-dependencies.yml
+name: job dependencies
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.value }}
+    steps:
+      - name: set version
+        id: set-version
+        run: echo "value=1.2.3" >> "$GITHUB_OUTPUT"
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: deploy the built version
+        run: echo "Deploying version ${{ needs.build.outputs.version }}"

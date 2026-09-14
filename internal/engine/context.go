@@ -12,13 +12,22 @@ type StepOutcome struct {
 	Outputs map[string]string
 }
 
-// Context is the set of GitHub Actions contexts (github, env, runner, steps)
-// available to expressions while a job runs.
+// JobOutcome is what a completed job exposes to jobs that `needs:` it.
+type JobOutcome struct {
+	Result  string // "success", "failure", or "skipped"
+	Outputs map[string]string
+}
+
+// Context is the set of GitHub Actions contexts (github, env, runner,
+// steps, needs, matrix, vars) available to expressions while a job runs.
 type Context struct {
 	GitHub map[string]interface{}
 	Env    map[string]string
 	Runner map[string]interface{}
 	Steps  map[string]StepOutcome
+	Needs  map[string]JobOutcome
+	Matrix MatrixCombination
+	Vars   map[string]string
 }
 
 // NewContext builds the initial Context for running job within workflow.
@@ -46,7 +55,10 @@ func NewContext(wf *Workflow, job *Job) *Context {
 			"os":   "Linux",
 			"temp": "/tmp",
 		},
-		Steps: map[string]StepOutcome{},
+		Steps:  map[string]StepOutcome{},
+		Needs:  map[string]JobOutcome{},
+		Matrix: MatrixCombination{},
+		Vars:   map[string]string{},
 	}
 }
 
@@ -119,6 +131,47 @@ func (c *Context) resolvePath(path []string) (interface{}, error) {
 		default:
 			return nil, fmt.Errorf("unknown steps field: %s", path[2])
 		}
+	case "needs":
+		if len(path) < 3 {
+			return nil, fmt.Errorf("invalid needs reference: %s", strings.Join(path, "."))
+		}
+		var outcome JobOutcome
+		var found bool
+		for id, o := range c.Needs {
+			if strings.EqualFold(id, path[1]) {
+				outcome, found = o, true
+				break
+			}
+		}
+		if !found {
+			return nil, nil
+		}
+		switch strings.ToLower(path[2]) {
+		case "result":
+			return outcome.Result, nil
+		case "outputs":
+			if len(path) != 4 {
+				return nil, fmt.Errorf("invalid needs.outputs reference: %s", strings.Join(path, "."))
+			}
+			return lookupStringCI(outcome.Outputs, path[3]), nil
+		default:
+			return nil, fmt.Errorf("unknown needs field: %s", path[2])
+		}
+	case "matrix":
+		if len(path) != 2 {
+			return nil, fmt.Errorf("invalid matrix reference: %s", strings.Join(path, "."))
+		}
+		for k, v := range c.Matrix {
+			if strings.EqualFold(k, path[1]) {
+				return v, nil
+			}
+		}
+		return nil, nil
+	case "vars":
+		if len(path) != 2 {
+			return nil, fmt.Errorf("invalid vars reference: %s", strings.Join(path, "."))
+		}
+		return lookupStringCI(c.Vars, path[1]), nil
 	default:
 		return nil, fmt.Errorf("unknown context: %s", path[0])
 	}

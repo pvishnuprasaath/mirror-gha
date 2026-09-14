@@ -1,0 +1,17 @@
+# Demonstrates strategy.matrix — this job runs once per combination of
+# the matrix axes, with each combination's values available via the
+# `matrix` context.
+#
+# Try it:
+#   mirror run examples/workflows/matrix-build.yml
+name: matrix build
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: ["16", "18", "20"]
+    steps:
+      - name: build with this version
+        run: echo "Building with Node ${{ matrix.version }}"
