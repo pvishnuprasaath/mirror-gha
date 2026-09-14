@@ -33,6 +33,33 @@ type StepSpec struct {
 	FilesDir         string // per-step host dir, must be created under Job.FilesRoot()
 }
 
+// DockerActionSpec is everything dockerJob.RunDockerAction needs to run a
+// uses: step whose action has runs.using: docker — a genuinely separate
+// sibling container, not an exec into the job's own long-lived container.
+// A Docker action's image is frequently a completely different base OS
+// than the job's own ubuntu:22.04, so it can't be docker-cp'd/exec'd into
+// the job container the way a JS action's Node runtime can be. Matches
+// act's own model: even act, which also runs one persistent container per
+// job, spins up Docker actions as their own container
+// (pkg/runner/action.go's execAsDocker).
+type DockerActionSpec struct {
+	Image      string
+	Entrypoint []string
+	Args       []string
+	Env        map[string]string
+
+	// ActionSourceDir is the host path to a repo-based action's own
+	// source, bind-mounted read-only at ActionPathInContainer. Empty for
+	// a raw docker://image:tag step, which has no action source at all.
+	ActionSourceDir       string
+	ActionPathInContainer string
+
+	// FilesDir is this step's host dir for the workflow-command file
+	// protocol (GITHUB_ENV/PATH/OUTPUT/STEP_SUMMARY) — same convention as
+	// StepSpec.FilesDir, must be created under Job.FilesRoot().
+	FilesDir string
+}
+
 // Job is one job's execution environment: a single long-lived container (or
 // equivalent), matching how real GitHub Actions and act both work — every
 // step of a job execs into the same environment, so filesystem state
@@ -57,6 +84,11 @@ type Job interface {
 	// docker-cp-style injection rather than a mount declared at StartJob.
 	CopyToContainer(ctx context.Context, hostPath, containerPath string) error
 	Exec(ctx context.Context, spec StepSpec) (StepResult, error)
+	// RunDockerAction runs a Docker action (runs.using: docker) as its own
+	// container, joined to the job container's network namespace so
+	// localhost service-container access keeps working — see
+	// DockerActionSpec's doc comment for why this can't just be an Exec.
+	RunDockerAction(ctx context.Context, spec DockerActionSpec) (StepResult, error)
 	Stop(ctx context.Context) error
 }
 

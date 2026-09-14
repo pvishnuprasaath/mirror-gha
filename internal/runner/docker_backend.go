@@ -62,15 +62,17 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context, hostWorkspaceDir stri
 	}
 
 	return &dockerJob{
-		containerID:   strings.TrimSpace(stdout.String()),
-		hostFilesRoot: hostFilesRoot,
+		containerID:      strings.TrimSpace(stdout.String()),
+		hostFilesRoot:    hostFilesRoot,
+		hostWorkspaceDir: hostWorkspaceDir,
 	}, nil
 }
 
 // dockerJob is one running container backing a single job.
 type dockerJob struct {
-	containerID   string
-	hostFilesRoot string
+	containerID      string
+	hostFilesRoot    string
+	hostWorkspaceDir string
 }
 
 func (j *dockerJob) FilesRoot() string {
@@ -157,6 +159,66 @@ func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 		}
 	}
 
+	return StepResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+}
+
+// RunDockerAction runs spec.Image as its own container — docker run --rm,
+// blocking until it exits — rather than docker exec into the job's own
+// container (see DockerActionSpec's doc comment for why). Binds the same
+// host workspace directory the job container itself uses, this step's
+// FilesDir for the workflow-command file protocol, the action's own
+// source (repo-based actions only), and /var/run/docker.sock
+// unconditionally — matching act's and real GitHub-hosted runners' own
+// behavior. --network container:<jobContainerID> joins the job
+// container's network namespace so localhost service-container access
+// keeps working, matching act's NetworkMode exactly.
+func (j *dockerJob) RunDockerAction(ctx context.Context, spec DockerActionSpec) (StepResult, error) {
+	args := []string{"run", "--rm",
+		"-v", j.hostWorkspaceDir + ":" + containerWorkspaceMount,
+		"-w", containerWorkspaceMount,
+		"-v", spec.FilesDir + ":" + containerFilesMount,
+		"-e", "GITHUB_WORKSPACE=" + containerWorkspaceMount,
+		"-e", "GITHUB_ENV=" + containerFilesMount + "/github_env",
+		"-e", "GITHUB_PATH=" + containerFilesMount + "/github_path",
+		"-e", "GITHUB_OUTPUT=" + containerFilesMount + "/github_output",
+		"-e", "GITHUB_STEP_SUMMARY=" + containerFilesMount + "/github_step_summary",
+	}
+	if spec.ActionSourceDir != "" {
+		args = append(args, "-v", spec.ActionSourceDir+":"+spec.ActionPathInContainer+":ro")
+		args = append(args, "-e", "GITHUB_ACTION_PATH="+spec.ActionPathInContainer)
+	}
+	for k, v := range spec.Env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+	}
+	args = append(args,
+		"--network", "container:"+j.containerID,
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+	)
+
+	var command []string
+	if len(spec.Entrypoint) > 0 {
+		args = append(args, "--entrypoint", spec.Entrypoint[0])
+		command = append(append([]string{}, spec.Entrypoint[1:]...), spec.Args...)
+	} else {
+		command = spec.Args
+	}
+	args = append(args, spec.Image)
+	args = append(args, command...)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return StepResult{}, fmt.Errorf("docker run (docker action %s): %w", spec.Image, err)
+		}
+	}
 	return StepResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
 }
 

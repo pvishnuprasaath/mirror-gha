@@ -244,3 +244,91 @@ func TestLinuxDockerBackend_WorkspacePath_IsMountedAndBidirectional(t *testing.T
 		t.Errorf("host file content = %q, want to contain %q", hostContent, "written-from-container")
 	}
 }
+
+func TestLinuxDockerBackend_RunDockerAction_WorkspaceMountAndArgs(t *testing.T) {
+	requireDocker(t)
+
+	workspaceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspaceDir, "marker.txt"), []byte("marker-content\n"), 0o644); err != nil {
+		t.Fatalf("write marker file: %v", err)
+	}
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), workspaceDir)
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	result, err := job.RunDockerAction(context.Background(), DockerActionSpec{
+		Image:    "alpine:3.19",
+		Args:     []string{"cat", "/github/workspace/marker.txt"},
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("RunDockerAction() error = %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0 (stderr: %s)", result.ExitCode, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, "marker-content") {
+		t.Errorf("Stdout = %q, want to contain %q", result.Stdout, "marker-content")
+	}
+}
+
+func TestLinuxDockerBackend_RunDockerAction_EntrypointOverride(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	result, err := job.RunDockerAction(context.Background(), DockerActionSpec{
+		Image:      "alpine:3.19",
+		Entrypoint: []string{"sh", "-c"},
+		Args:       []string{"echo entrypoint-override"},
+		FilesDir:   mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("RunDockerAction() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "entrypoint-override") {
+		t.Errorf("Stdout = %q, want to contain %q", result.Stdout, "entrypoint-override")
+	}
+}
+
+func TestLinuxDockerBackend_RunDockerAction_EnvAndOutputFile(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	filesDir := mkStepDir(t, job.FilesRoot())
+	result, err := job.RunDockerAction(context.Background(), DockerActionSpec{
+		Image:      "alpine:3.19",
+		Entrypoint: []string{"sh", "-c"},
+		Args:       []string{`echo "greeting=hello $INPUT_NAME" >> "$GITHUB_OUTPUT"`},
+		Env:        map[string]string{"INPUT_NAME": "mirror-gha"},
+		FilesDir:   filesDir,
+	})
+	if err != nil {
+		t.Fatalf("RunDockerAction() error = %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0 (stderr: %s)", result.ExitCode, result.Stderr)
+	}
+	outputData, err := os.ReadFile(filepath.Join(filesDir, "github_output"))
+	if err != nil {
+		t.Fatalf("read github_output: %v", err)
+	}
+	if !strings.Contains(string(outputData), "greeting=hello mirror-gha") {
+		t.Errorf("github_output = %q, want to contain %q", outputData, "greeting=hello mirror-gha")
+	}
+}

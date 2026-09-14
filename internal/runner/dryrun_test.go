@@ -49,6 +49,21 @@ func TestDryRunBackend_CopyToContainerIsNoOp(t *testing.T) {
 	}
 }
 
+func TestDryRunBackend_RunDockerActionIsNoOp(t *testing.T) {
+	backend := DryRunBackend{}
+	job, err := backend.StartJob(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	result, err := job.RunDockerAction(context.Background(), DockerActionSpec{Image: "whatever:latest"})
+	if err != nil {
+		t.Errorf("RunDockerAction() error = %v, want nil (no-op in dry-run mode)", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+}
+
 func TestDryRunBackend_WorkspacePathReportsGivenDir(t *testing.T) {
 	workspaceDir := t.TempDir()
 	backend := DryRunBackend{}

@@ -43,6 +43,10 @@ func (j *dryRunJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 	return StepResult{ExitCode: 0, Stdout: "(dry run: not executed)\n"}, nil
 }
 
+func (j *dryRunJob) RunDockerAction(ctx context.Context, spec DockerActionSpec) (StepResult, error) {
+	return StepResult{ExitCode: 0, Stdout: "(dry run: not executed)\n"}, nil
+}
+
 func (j *dryRunJob) Stop(ctx context.Context) error {
 	return os.RemoveAll(j.dir)
 }
