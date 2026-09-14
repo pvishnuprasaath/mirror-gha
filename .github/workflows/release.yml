@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, needed for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: false # no go.sum: see .github/workflows/ci.yml
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Needed only once brews.skip_upload is set to false in
+          # .goreleaser.yaml — a token with write access to the
+          # homebrew-tap repo. See docs/RELEASING.md.
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

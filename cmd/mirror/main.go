@@ -12,7 +12,15 @@ import (
 	"mirror-gha/internal/runner"
 )
 
-const version = "0.0.1-dev"
+// Populated via -ldflags by GoReleaser at release build time (its default
+// ldflags target exactly these variable names); "dev"/"none"/"unknown"
+// are what a plain `go build` leaves them as.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "source"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -22,7 +30,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		fmt.Println("mirror", version)
+		fmt.Printf("mirror %s (commit %s, built %s by %s)\n", version, commit, date, builtBy)
 	case "run":
 		os.Exit(runMain(os.Args[2:]))
 	case "dashboard":

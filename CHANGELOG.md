@@ -9,6 +9,15 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **Release pipeline.** GoReleaser (`.goreleaser.yaml`) + a GitHub
+  Actions workflow (`.github/workflows/release.yml`) triggered on `v*`
+  tags — builds linux/darwin × amd64/arm64 binaries, checksums, a
+  grouped changelog, and a GitHub Release; a Homebrew cask is fully
+  configured but disabled (`skip_upload: true`) until the
+  `homebrew-tap` repo exists, see `docs/RELEASING.md`. `install.sh`
+  gives a `curl | sh` install path that verifies the download's
+  checksum. Verified end-to-end with a local `goreleaser --snapshot`
+  build (real binary extracted and run) before committing.
 - `mirror run --list` — every job (and matrix combination), its
   `runs-on` and `needs:`, without running anything.
 - `mirror run --graph` — jobs in dependency order, `needs:` indented
@@ -17,21 +26,6 @@ Unreleased until the first `v0.1.0`.
   end to end, but every step reports success without executing. Still
   validates `runs-on` support, so an unsupported runner errors even in
   dry-run mode.
-
-### Fixed
-
-- **Job container lifecycle.** Comparing against `nektos/act`'s source
-  found a real fidelity bug: every step of a job now execs into one
-  long-lived container for that job (matching how act and real GitHub
-  Actions both work), instead of a fresh `docker run --rm` per step.
-  Filesystem state — checked-out files, installed packages, `PATH`
-  changes — now persists step to step within a job.
-- **Temp directory leak.** Every job run left its host-side workflow-command
-  files directory behind in the OS temp dir forever, since `Stop()` only
-  removed the container. Now cleaned up alongside the container.
-
-### Added
-
 - Workflow YAML parsing (`internal/engine`) — jobs, steps, `env`, `if`,
   `continue-on-error`, `working-directory`, `timeout-minutes`,
   `defaults`, `strategy`, `outputs`, `needs` (scalar or list form).
@@ -63,6 +57,18 @@ Unreleased until the first `v0.1.0`.
 - `mirror run <workflow.yml>` CLI command, running the full job DAG
   end-to-end.
 - Runnable examples under `examples/workflows/` for every feature above.
+
+### Fixed
+
+- **Job container lifecycle.** Comparing against `nektos/act`'s source
+  found a real fidelity bug: every step of a job now execs into one
+  long-lived container for that job (matching how act and real GitHub
+  Actions both work), instead of a fresh `docker run --rm` per step.
+  Filesystem state — checked-out files, installed packages, `PATH`
+  changes — now persists step to step within a job.
+- **Temp directory leak.** Every job run left its host-side workflow-command
+  files directory behind in the OS temp dir forever, since `Stop()` only
+  removed the container. Now cleaned up alongside the container.
 
 ### Known limitations
 

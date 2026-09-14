@@ -34,13 +34,29 @@ the full reasoning and roadmap.
 
 ## Install
 
-Requires [Go](https://go.dev/) 1.27+ and [Docker](https://www.docker.com/).
-No published binary release yet (pre-alpha) — build from source:
+Requires [Docker](https://www.docker.com/) either way.
+
+**No tagged release exists yet** (pre-alpha) — the options below activate
+the moment the first `v*` tag is pushed (see
+[docs/RELEASING.md](docs/RELEASING.md)); until then, build from source:
 
 ```bash
 git clone git@github.com:pvishnuprasaath/mirror-gha.git
 cd mirror-gha
-make build          # produces ./bin/mirror
+make build          # produces ./bin/mirror — requires Go 1.27+
+```
+
+**Once a release exists:**
+
+```bash
+# Install script (Linux/macOS, verifies the download's sha256):
+curl -fsSL https://raw.githubusercontent.com/pvishnuprasaath/mirror-gha/main/install.sh | sh
+
+# Or download a prebuilt binary directly from the Releases page:
+# https://github.com/pvishnuprasaath/mirror-gha/releases/latest
+
+# Homebrew — not yet, tap isn't published (see docs/RELEASING.md):
+# brew install --cask pvishnuprasaath/tap/mirror-gha
 ```
 
 ## Quickstart

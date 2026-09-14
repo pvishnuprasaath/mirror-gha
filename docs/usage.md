@@ -2,18 +2,22 @@
 
 ## Installation
 
-Requires [Go](https://go.dev/) 1.27+ and [Docker](https://www.docker.com/)
-(jobs execute inside a real Docker container — that's how fidelity to
-real GitHub Actions is kept honest).
+Requires [Docker](https://www.docker.com/) either way (jobs execute
+inside a real Docker container — that's how fidelity to real GitHub
+Actions is kept honest).
+
+**No tagged release exists yet** (pre-alpha). Build from source for now:
 
 ```bash
 git clone git@github.com:pvishnuprasaath/mirror-gha.git
 cd mirror-gha
-make build          # produces ./bin/mirror
+make build          # produces ./bin/mirror — requires Go 1.27+
 ```
 
-There's no published binary release yet (pre-alpha) — build from source
-for now.
+Once the first `v*` tag is pushed, `curl -fsSL .../install.sh | sh` and
+prebuilt binaries on the GitHub Releases page become available — see
+[../README.md](../README.md#install) and
+[RELEASING.md](RELEASING.md) for exactly how the release pipeline works.
 
 ## Quickstart
 

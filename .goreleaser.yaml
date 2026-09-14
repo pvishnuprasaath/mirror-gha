@@ -1,0 +1,79 @@
+version: 2
+
+project_name: mirror-gha
+
+builds:
+  - id: mirror
+    main: ./cmd/mirror
+    binary: mirror
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # No custom ldflags: GoReleaser's default
+    # (-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+    #  -X main.date={{.Date}} -X main.builtBy=goreleaser)
+    # targets exactly the var names declared in cmd/mirror/main.go.
+
+archives:
+  - id: mirror-archive
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: "Fixed"
+      regexp: '^fix(\(.+\))?:'
+      order: 0
+    - title: "Added"
+      regexp: '^feat(\(.+\))?:'
+      order: 1
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: pvishnuprasaath
+    name: mirror-gha
+  prerelease: auto
+
+# Homebrew tap publishing — off until the pvishnuprasaath/homebrew-tap
+# repo actually exists (GoReleaser will fail trying to push a cask to a
+# repo that isn't there yet). Create that repo, then set
+# skip_upload: false. See docs/RELEASING.md.
+#
+# Uses homebrew_casks, not the legacy brews section — brews (Formula)
+# was fully deprecated in GoReleaser v2.16 in favor of casks for
+# distributing precompiled binaries.
+homebrew_casks:
+  - name: mirror-gha
+    repository:
+      owner: pvishnuprasaath
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    skip_upload: true
+    binaries:
+      - mirror
+    homepage: "https://github.com/pvishnuprasaath/mirror-gha"
+    description: "Test your GitHub Actions workflows locally — for real."
