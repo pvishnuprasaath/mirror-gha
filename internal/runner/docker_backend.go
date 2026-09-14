@@ -16,6 +16,50 @@ import (
 // tracking that catalog is a follow-up fidelity task, not in this slice.
 const linuxRunnerImage = "ubuntu:22.04"
 
+// registryHostFor parses the registry host out of an image reference —
+// duplicated from internal/engine's identical helper rather than
+// exported/cross-imported, matching this project's established
+// precedent (requireDocker/requireNetwork are also duplicated per
+// package) of keeping these packages decoupled.
+func registryHostFor(image string) string {
+	const dockerHub = "index.docker.io"
+	first, _, found := strings.Cut(image, "/")
+	if !found {
+		return dockerHub
+	}
+	if strings.ContainsAny(first, ".:") || first == "localhost" {
+		return first
+	}
+	return dockerHub
+}
+
+// dockerRegistryLogin authenticates docker's local credential store to
+// registry so a subsequent docker pull/run against a private image
+// succeeds. password is piped via stdin (--password-stdin), never passed
+// as a -p/--password argument, so it never appears in process args or
+// shell history.
+func dockerRegistryLogin(ctx context.Context, registry, username, password string) error {
+	cmd := exec.CommandContext(ctx, "docker", "login", registry, "-u", username, "--password-stdin")
+	cmd.Stdin = strings.NewReader(password)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker login %s: %w: %s", registry, err, stderr.String())
+	}
+	return nil
+}
+
+// dockerRegistryLogout is best-effort cleanup, called from dockerJob.Stop.
+func dockerRegistryLogout(ctx context.Context, registry string) error {
+	cmd := exec.CommandContext(ctx, "docker", "logout", registry)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker logout %s: %w: %s", registry, err, stderr.String())
+	}
+	return nil
+}
+
 // containerFilesMount is where a job's FilesRoot is bind-mounted inside
 // the container.
 const containerFilesMount = "/mirror-files"
@@ -49,15 +93,53 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context, jobID string, hostWor
 		return nil, fmt.Errorf("create job files root: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
-		"-v", hostFilesRoot+":"+containerFilesMount,
-		"-v", hostWorkspaceDir+":"+containerWorkspaceMount,
-		b.image, "sleep", "infinity",
-	)
+	image := b.image
+	var registryLogouts []string
+	if containerSpec != nil {
+		if containerSpec.Image != "" {
+			image = containerSpec.Image
+		}
+		if containerSpec.Username != "" {
+			registry := registryHostFor(image)
+			if err := dockerRegistryLogin(ctx, registry, containerSpec.Username, containerSpec.Password); err != nil {
+				os.RemoveAll(hostFilesRoot)
+				return nil, err
+			}
+			registryLogouts = append(registryLogouts, registry)
+		}
+	}
+
+	args := []string{"run", "-d", "--rm",
+		"-v", hostFilesRoot + ":" + containerFilesMount,
+		"-v", hostWorkspaceDir + ":" + containerWorkspaceMount,
+	}
+	if containerSpec != nil {
+		for k, v := range containerSpec.Env {
+			args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+		}
+		for _, p := range containerSpec.Ports {
+			args = append(args, "-p", p)
+		}
+		for _, v := range containerSpec.Volumes {
+			args = append(args, "-v", v)
+		}
+		if containerSpec.Options != "" {
+			opts, err := splitDockerOptions(containerSpec.Options)
+			if err != nil {
+				os.RemoveAll(hostFilesRoot)
+				return nil, err
+			}
+			args = append(args, opts...)
+		}
+	}
+	args = append(args, image, "sleep", "infinity")
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		os.RemoveAll(hostFilesRoot)
 		return nil, fmt.Errorf("start job container: %w: %s", err, stderr.String())
 	}
 
@@ -65,6 +147,7 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context, jobID string, hostWor
 		containerID:      strings.TrimSpace(stdout.String()),
 		hostFilesRoot:    hostFilesRoot,
 		hostWorkspaceDir: hostWorkspaceDir,
+		registryLogouts:  registryLogouts,
 	}, nil
 }
 
@@ -73,6 +156,7 @@ type dockerJob struct {
 	containerID      string
 	hostFilesRoot    string
 	hostWorkspaceDir string
+	registryLogouts  []string
 }
 
 func (j *dockerJob) FilesRoot() string {
@@ -232,6 +316,11 @@ func (j *dockerJob) Stop(ctx context.Context) error {
 	if stopErr != nil {
 		stopErr = fmt.Errorf("stop job container %s: %w: %s", j.containerID, stopErr, stderr.String())
 	}
+
+	for _, registry := range j.registryLogouts {
+		dockerRegistryLogout(ctx, registry) // best-effort, error intentionally ignored
+	}
+
 	// Always attempt cleanup of the host-side files root, even if the
 	// container removal above failed — it's a plain temp directory, not
 	// something Docker knows about, and leaving it behind on every job

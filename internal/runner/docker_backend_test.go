@@ -332,3 +332,63 @@ func TestLinuxDockerBackend_RunDockerAction_EnvAndOutputFile(t *testing.T) {
 		t.Errorf("github_output = %q, want to contain %q", outputData, "greeting=hello mirror-gha")
 	}
 }
+
+func TestLinuxDockerBackend_StartJob_ContainerImageSwap(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), &ContainerSpec{Image: "alpine:3.19"}, nil)
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	result, err := job.Exec(context.Background(), StepSpec{
+		Command:  "cat /etc/os-release",
+		Shell:    "sh",
+		Env:      map[string]string{},
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "Alpine") {
+		t.Errorf("Stdout = %q, want it to identify as Alpine (proving the image swap took effect, not the default ubuntu:22.04)", result.Stdout)
+	}
+}
+
+func TestLinuxDockerBackend_StartJob_ContainerEnvAndOptions(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), &ContainerSpec{
+		Options: `--label "mirror-test=yes"`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	dj := job.(*dockerJob)
+	cmd := exec.CommandContext(context.Background(), "docker", "inspect", "--format", "{{index .Config.Labels \"mirror-test\"}}", dj.containerID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker inspect error = %v: %s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "yes" {
+		t.Errorf("label mirror-test = %q, want yes (proving Options reached docker run)", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestRegistryHostFor_RunnerPackage(t *testing.T) {
+	cases := map[string]string{
+		"node:20":                 "index.docker.io",
+		"ghcr.io/owner/image:tag": "ghcr.io",
+	}
+	for image, want := range cases {
+		got := registryHostFor(image)
+		if got != want {
+			t.Errorf("registryHostFor(%q) = %q, want %q", image, got, want)
+		}
+	}
+}
