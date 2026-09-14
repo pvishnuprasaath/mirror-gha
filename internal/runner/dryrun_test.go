@@ -38,6 +38,17 @@ func TestDryRunBackend_StopRemovesFilesRoot(t *testing.T) {
 	}
 }
 
+func TestDryRunBackend_CopyToContainerIsNoOp(t *testing.T) {
+	backend := DryRunBackend{}
+	job, err := backend.StartJob(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	if err := job.CopyToContainer(context.Background(), t.TempDir(), "/anywhere"); err != nil {
+		t.Errorf("CopyToContainer() error = %v, want nil (no-op in dry-run mode)", err)
+	}
+}
+
 func TestDryRunBackend_WorkspacePathReportsGivenDir(t *testing.T) {
 	workspaceDir := t.TempDir()
 	backend := DryRunBackend{}

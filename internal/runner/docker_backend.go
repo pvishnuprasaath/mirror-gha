@@ -81,6 +81,16 @@ func (j *dockerJob) WorkspacePath() string {
 	return containerWorkspaceMount
 }
 
+func (j *dockerJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	cmd := exec.CommandContext(ctx, "docker", "cp", hostPath, j.containerID+":"+containerPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker cp %s -> %s:%s: %w: %s", hostPath, j.containerID, containerPath, err, stderr.String())
+	}
+	return nil
+}
+
 func (j *dockerJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error) {
 	shell := spec.Shell
 	if shell == "" {

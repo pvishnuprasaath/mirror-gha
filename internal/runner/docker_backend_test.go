@@ -151,6 +151,38 @@ func TestLinuxDockerBackend_Exec_RejectsFilesDirOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestLinuxDockerBackend_CopyToContainer(t *testing.T) {
+	requireDocker(t)
+
+	hostDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hostDir, "hello.txt"), []byte("copied\n"), 0o644); err != nil {
+		t.Fatalf("write host file: %v", err)
+	}
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	if err := job.CopyToContainer(context.Background(), hostDir, "/mirror-copy-test"); err != nil {
+		t.Fatalf("CopyToContainer() error = %v", err)
+	}
+
+	result, err := job.Exec(context.Background(), StepSpec{
+		Command:  "cat /mirror-copy-test/hello.txt",
+		Shell:    "sh",
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "copied") {
+		t.Errorf("Stdout = %q, want to contain %q", result.Stdout, "copied")
+	}
+}
+
 func TestLinuxDockerBackend_StartJob_RejectsEmptyWorkspaceDir(t *testing.T) {
 	requireDocker(t)
 

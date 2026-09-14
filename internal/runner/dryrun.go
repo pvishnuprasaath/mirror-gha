@@ -35,6 +35,10 @@ func (j *dryRunJob) FilesRoot() string { return j.dir }
 // display/env purposes when nothing is actually executed.
 func (j *dryRunJob) WorkspacePath() string { return j.workspaceDir }
 
+func (j *dryRunJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	return nil
+}
+
 func (j *dryRunJob) Exec(ctx context.Context, spec StepSpec) (StepResult, error) {
 	return StepResult{ExitCode: 0, Stdout: "(dry run: not executed)\n"}, nil
 }

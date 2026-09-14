@@ -40,6 +40,11 @@ type Job interface {
 	// use this for the GITHUB_WORKSPACE env var, the github.workspace
 	// context value, and as the default step working directory.
 	WorkspacePath() string
+	// CopyToContainer injects hostPath into the running environment at
+	// containerPath — the mechanism uses: steps use to stage a JS action's
+	// source and the pinned Node runtime, matching act's own on-demand
+	// docker-cp-style injection rather than a mount declared at StartJob.
+	CopyToContainer(ctx context.Context, hostPath, containerPath string) error
 	Exec(ctx context.Context, spec StepSpec) (StepResult, error)
 	Stop(ctx context.Context) error
 }
