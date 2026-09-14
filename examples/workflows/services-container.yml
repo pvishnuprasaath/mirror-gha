@@ -1,0 +1,29 @@
+# Demonstrates job-level container: (the job's own container runs a
+# different image than the default ubuntu:22.04) and services: (a
+# sidecar container reachable from job steps by name).
+#
+# Try it:
+#   mirror run examples/workflows/services-container.yml
+name: services and container
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: node:20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    steps:
+      - name: confirm container image swap
+        run: node --version
+      - name: install postgres client
+        run: apt-get update -qq && apt-get install -y -qq postgresql-client
+      - name: confirm service reachable by name
+        run: pg_isready -h postgres -U postgres

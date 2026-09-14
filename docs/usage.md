@@ -148,6 +148,24 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   whose axis-key subset already matches, or — if it matches nothing —
   becomes its own standalone combination. A matrix with only `include`
   and no axes treats each include entry as one full combination directly.
+- **`container:` and `services:` job fields** — `container:` swaps the
+  image the job's own container runs as (bare image string or a mapping
+  with `env`/`ports`/`volumes`/`options`/`credentials`); `services:`
+  starts one sidecar container per entry, reachable from job steps by
+  its map key as hostname over a per-job Docker network created only
+  when services are present (jobs without `services:` are unaffected —
+  no network is created). Both support `credentials:` (`username`/
+  `password`, exactly those two keys) for private registries — mirror-gha
+  shells out to `docker login`/`docker logout` around the pull/run since
+  it has no Docker Go SDK dependency (password piped via stdin, never
+  passed as a CLI argument). Health-checked services (`options:
+  --health-cmd ...`) are waited on (up to 5 minutes) before the job's
+  steps start; services with no healthcheck are treated as ready
+  immediately. Known v1 limitation: registry login/logout is
+  process-wide (shared Docker daemon config), so two jobs in the same
+  `mirror run` pulling different private images concurrently could
+  race — acceptable for a local single-workflow-run tool, not solved in
+  v1.
 - **`timeout-minutes`** at both job and step level.
 - **`defaults.run.shell` / `defaults.run.working-directory`** at workflow
   and job level, with the real GitHub Actions precedence: step overrides
@@ -201,7 +219,6 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- `services:` and `container:` job fields
 - Windows and macOS runners (`windows-latest`, `macos-latest`) — these
   return a clear error naming the limitation, not a silent wrong result
 - A dashboard UI

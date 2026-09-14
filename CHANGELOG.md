@@ -9,6 +9,28 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **`container:` and `services:` job fields.** Checked against act's own
+  implementation (`pkg/model/workflow.go`'s `Job.Container()`/
+  `ContainerSpec`, `pkg/runner/run_context.go`'s `startJobContainer`/
+  service loop, `pkg/container/docker_network.go`) rather than guessed:
+  `container:` swaps the image the job's own container runs (no separate
+  "runner" container — act doesn't have one either); `services:` starts
+  one sidecar container per entry on a per-job Docker network created
+  only when services are present, reachable from the job container by
+  service name via `--network-alias` (Docker's embedded DNS only
+  resolves aliases on user-defined networks, not the default bridge, so
+  the job container joins that same network whenever services exist).
+  Registry `credentials:` supported for both, via `docker login`/
+  `docker logout` (mirror-gha shells to the `docker` CLI, not the Docker
+  Go SDK act uses) — password piped via stdin, never passed as a CLI
+  argument. A hand-rolled quote-aware tokenizer parses `options:` since
+  values like `--health-cmd "pg_isready -U postgres"` contain spaces
+  inside quotes (no external shlex dependency, keeping the
+  zero-external-Go-dependency record intact). Verified for real: a
+  `container: node:20` job running a step that depends on Node actually
+  being present, with a `services: postgres` sidecar reached by hostname
+  from inside that non-default job-container image, and confirmed
+  `docker network`/`docker ps` show everything cleaned up after the run.
 - **`matrix.include`/`matrix.exclude`.** Real GitHub Actions merge
   semantics, checked against act's own implementation
   (`pkg/model/workflow.go`'s `GetMatrixes`) rather than guessed: exclude
