@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"mirror-gha/internal/runner"
@@ -9,13 +10,32 @@ import (
 
 type fakeBackend struct {
 	results []runner.StepResult
-	calls   int
 }
 
-func (f *fakeBackend) RunStep(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
-	r := f.results[f.calls]
-	f.calls++
+func (f *fakeBackend) StartJob(ctx context.Context) (runner.Job, error) {
+	dir, err := os.MkdirTemp("", "fake-job-")
+	if err != nil {
+		return nil, err
+	}
+	return &fakeJob{results: f.results, dir: dir}, nil
+}
+
+type fakeJob struct {
+	results []runner.StepResult
+	calls   int
+	dir     string
+}
+
+func (j *fakeJob) FilesRoot() string { return j.dir }
+
+func (j *fakeJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
+	r := j.results[j.calls]
+	j.calls++
 	return r, nil
+}
+
+func (j *fakeJob) Stop(ctx context.Context) error {
+	return os.RemoveAll(j.dir)
 }
 
 func TestRunJob_AllStepsSucceed(t *testing.T) {

@@ -28,9 +28,20 @@ type StepReport struct {
 // RunJob executes every step of job in order against backend, evaluating
 // `if:` conditions, substituting ${{ }} expressions in `run:` commands, and
 // honoring `continue-on-error`. It stops at the first unhandled failure.
+//
+// All steps run inside the same job-scoped environment (one container for
+// the whole job, not one per step) so filesystem state — checked-out
+// files, installed packages, PATH changes — persists step to step, the
+// same way real GitHub Actions and act both work.
 func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend) (*JobResult, error) {
 	actx := NewContext(wf, job)
 	result := &JobResult{Conclusion: "success"}
+
+	runnerJob, err := backend.StartJob(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("start job: %w", err)
+	}
+	defer runnerJob.Stop(ctx)
 
 	for i, step := range job.Steps {
 		id := step.ID
@@ -55,7 +66,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend)
 			return nil, fmt.Errorf("substitute expressions for step %s: %w", id, err)
 		}
 
-		filesDir, err := os.MkdirTemp("", "mirror-step-")
+		filesDir, err := os.MkdirTemp(runnerJob.FilesRoot(), "step-")
 		if err != nil {
 			return nil, fmt.Errorf("create temp dir for step %s: %w", id, err)
 		}
@@ -72,7 +83,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend)
 			env[k] = v
 		}
 
-		stepResult, err := backend.RunStep(ctx, runner.StepSpec{
+		stepResult, err := runnerJob.Exec(ctx, runner.StepSpec{
 			Command:          command,
 			Shell:            step.Shell,
 			Env:              env,

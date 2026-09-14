@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,19 +16,33 @@ func requireDocker(t *testing.T) {
 	}
 }
 
-func TestLinuxDockerBackend_RunStep_Success(t *testing.T) {
+func mkStepDir(t *testing.T, root string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(root, "step-")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	return dir
+}
+
+func TestLinuxDockerBackend_Exec_Success(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	dir := t.TempDir()
-	result, err := backend.RunStep(context.Background(), StepSpec{
+	job, err := backend.StartJob(context.Background())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	result, err := job.Exec(context.Background(), StepSpec{
 		Command:  "echo hello",
 		Shell:    "sh",
 		Env:      map[string]string{},
-		FilesDir: dir,
+		FilesDir: mkStepDir(t, job.FilesRoot()),
 	})
 	if err != nil {
-		t.Fatalf("RunStep() error = %v", err)
+		t.Fatalf("Exec() error = %v", err)
 	}
 	if result.ExitCode != 0 {
 		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
@@ -36,21 +52,82 @@ func TestLinuxDockerBackend_RunStep_Success(t *testing.T) {
 	}
 }
 
-func TestLinuxDockerBackend_RunStep_NonZeroExit(t *testing.T) {
+func TestLinuxDockerBackend_Exec_NonZeroExit(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	dir := t.TempDir()
-	result, err := backend.RunStep(context.Background(), StepSpec{
+	job, err := backend.StartJob(context.Background())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	result, err := job.Exec(context.Background(), StepSpec{
 		Command:  "exit 7",
 		Shell:    "sh",
 		Env:      map[string]string{},
-		FilesDir: dir,
+		FilesDir: mkStepDir(t, job.FilesRoot()),
 	})
 	if err != nil {
-		t.Fatalf("RunStep() error = %v", err)
+		t.Fatalf("Exec() error = %v", err)
 	}
 	if result.ExitCode != 7 {
 		t.Errorf("ExitCode = %d, want 7", result.ExitCode)
+	}
+}
+
+// TestLinuxDockerBackend_Exec_StatePersistsAcrossSteps is the regression
+// test for the container-lifecycle fidelity bug found by comparing against
+// nektos/act: a job is one continuous environment, not a fresh container
+// per step. A file written in one Exec call must be visible to the next.
+func TestLinuxDockerBackend_Exec_StatePersistsAcrossSteps(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	_, err = job.Exec(context.Background(), StepSpec{
+		Command:  "echo persisted > /tmp/state-test.txt",
+		Shell:    "sh",
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("first Exec() error = %v", err)
+	}
+
+	result, err := job.Exec(context.Background(), StepSpec{
+		Command:  "cat /tmp/state-test.txt",
+		Shell:    "sh",
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("second Exec() error = %v", err)
+	}
+	if !strings.Contains(result.Stdout, "persisted") {
+		t.Errorf("Stdout = %q, want to contain %q (file written by the first step should be visible to the second)", result.Stdout, "persisted")
+	}
+}
+
+func TestLinuxDockerBackend_Exec_RejectsFilesDirOutsideRoot(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background())
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	_, err = job.Exec(context.Background(), StepSpec{
+		Command:  "echo hello",
+		Shell:    "sh",
+		FilesDir: filepath.Join(os.TempDir(), "not-under-job-root"),
+	})
+	if err == nil {
+		t.Fatal("Exec() error = nil, want error for a FilesDir outside the job's FilesRoot")
 	}
 }

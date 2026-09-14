@@ -1,0 +1,17 @@
+# Demonstrates that all steps in a job share the same environment — a file
+# written by one step is visible to the next, exactly like real GitHub
+# Actions (all steps of a job run in one continuous VM/container, not a
+# fresh one per step).
+#
+# Try it:
+#   mirror run examples/workflows/shared-state.yml
+name: shared state across steps
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: write a file
+        run: echo "hello from step 1" > /tmp/shared.txt
+      - name: read it back in a later step
+        run: cat /tmp/shared.txt
