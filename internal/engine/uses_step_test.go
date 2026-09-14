@@ -56,8 +56,9 @@ runs:
 	step := Step{Uses: "./my-action", With: map[string]string{"greeting": "hi"}}
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := false
+	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
 
-	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
+	plan, err := prepareUsesStep(context.Background(), p, "greet", step, actx)
 	if err != nil {
 		t.Fatalf("prepareUsesStep() error = %v", err)
 	}
@@ -95,8 +96,9 @@ func TestPrepareUsesStep_RejectsCompositeRuntime(t *testing.T) {
 	step := Step{Uses: "./composite-action"}
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := true
+	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
 
-	_, err := prepareUsesStep(context.Background(), job, workspaceDir, "one", step, actx, &nodeReady)
+	_, err := prepareUsesStep(context.Background(), p, "one", step, actx)
 	if err == nil {
 		t.Fatal("prepareUsesStep() error = nil, want error for runs.using: composite")
 	}
@@ -111,8 +113,9 @@ func TestPrepareUsesStep_RawDockerImage(t *testing.T) {
 	}
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := false
+	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
 
-	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "raw", step, actx, &nodeReady)
+	plan, err := prepareUsesStep(context.Background(), p, "raw", step, actx)
 	if err != nil {
 		t.Fatalf("prepareUsesStep() error = %v", err)
 	}
@@ -162,8 +165,9 @@ runs:
 	step := Step{Uses: "./docker-action", With: map[string]string{"who-to-greet": "mirror-gha"}}
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := false
+	p := runStepParams{RunnerJob: job, WorkspaceDir: workspaceDir, NodeReady: &nodeReady}
 
-	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
+	plan, err := prepareUsesStep(context.Background(), p, "greet", step, actx)
 	if err != nil {
 		t.Fatalf("prepareUsesStep() error = %v", err)
 	}

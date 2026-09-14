@@ -86,7 +86,7 @@ func TestRunWorkflow_RunsInDependencyOrder(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir())
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunWorkflow_SkipsJobWhenNeedFails(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir())
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRunWorkflow_PropagatesJobOutputsToNeeds(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir())
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir())
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -192,7 +192,7 @@ func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
 		},
 	}
 
-	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "")
+	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil)
 	if err == nil {
 		t.Fatal("RunWorkflow() with empty workspaceDir error = nil, want error")
 	}

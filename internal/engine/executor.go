@@ -32,10 +32,27 @@ type StepReport struct {
 // matrix combination, any locally-supplied `vars`, and the host workspace
 // directory to mount) rather than the job definition itself.
 type JobRunOptions struct {
-	Needs        map[string]JobOutcome
-	Matrix       MatrixCombination
-	Vars         map[string]string
-	WorkspaceDir string // host directory bind-mounted as the job's workspace
+	Needs                    map[string]JobOutcome
+	Matrix                   MatrixCombination
+	Vars                     map[string]string
+	WorkspaceDir             string // host directory bind-mounted as the job's workspace
+	LocalRepositoryOverrides map[string]string
+}
+
+// runStepParams bundles what varies between a job's own top-level steps
+// and a composite action's nested ones — RunnerJob/WorkspaceDir/NodeReady/
+// LocalRepositoryOverrides stay the same across an entire job (including
+// into any composite action nested inside it), while Workflow/Job/Depth
+// change for a composite's synthetic child execution (see
+// composite_step.go's runCompositeSteps).
+type runStepParams struct {
+	Workflow                 *Workflow
+	Job                      *Job
+	RunnerJob                runner.Job
+	WorkspaceDir             string
+	NodeReady                *bool
+	LocalRepositoryOverrides map[string]string
+	Depth                    int
 }
 
 // RunJob executes every step of job in order against backend, evaluating
@@ -70,140 +87,28 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	actx.GitHub["workspace"] = runnerJob.WorkspacePath()
 	nodeReady := false
 
+	p := runStepParams{
+		Workflow:                 wf,
+		Job:                      job,
+		RunnerJob:                runnerJob,
+		WorkspaceDir:             opts.WorkspaceDir,
+		NodeReady:                &nodeReady,
+		LocalRepositoryOverrides: opts.LocalRepositoryOverrides,
+	}
+
 	for i, step := range job.Steps {
 		id := step.ID
 		if id == "" {
 			id = fmt.Sprintf("step-%d", i)
 		}
 
-		if step.Run != "" && step.Uses != "" {
-			return nil, fmt.Errorf("step %s: cannot set both run: and uses:", id)
-		}
-
-		if step.If != "" {
-			ok, err := EvalBool(step.If, actx)
-			if err != nil {
-				return nil, fmt.Errorf("evaluate if: for step %s: %w", id, err)
-			}
-			if !ok {
-				actx.Steps[id] = StepOutcome{Outcome: "skipped"}
-				result.Steps = append(result.Steps, StepReport{ID: id, Name: step.Name, Conclusion: "skipped"})
-				continue
-			}
-		}
-
-		var command string
-		var plan usesStepPlan
-		if step.Uses != "" {
-			plan, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
-			if err != nil {
-				return nil, fmt.Errorf("prepare uses: step %s: %w", id, err)
-			}
-		} else {
-			command, err = SubstituteExpressions(step.Run, actx)
-			if err != nil {
-				return nil, fmt.Errorf("substitute expressions for step %s: %w", id, err)
-			}
-		}
-
-		filesDir, err := os.MkdirTemp(runnerJob.FilesRoot(), "step-")
+		report, err := runStep(ctx, p, actx, step, id)
 		if err != nil {
-			return nil, fmt.Errorf("create temp dir for step %s: %w", id, err)
+			return nil, err
 		}
-		fileSet, err := commands.CreateFileSet(filesDir)
-		if err != nil {
-			return nil, fmt.Errorf("create workflow command files for step %s: %w", id, err)
-		}
+		result.Steps = append(result.Steps, report)
 
-		env := map[string]string{}
-		for k, v := range actx.Env {
-			env[k] = v
-		}
-		for k, v := range step.Env {
-			env[k] = v
-		}
-		env["GITHUB_WORKSPACE"] = runnerJob.WorkspacePath()
-		for k, v := range plan.Env {
-			env[k] = v
-		}
-
-		// uses: steps always run in the job workspace — real GitHub Actions
-		// doesn't let them override their working directory at all, unlike
-		// run: steps.
-		workingDirectory := runnerJob.WorkspacePath()
-		if step.Uses == "" {
-			if wd := effectiveWorkingDirectory(step, job, wf); wd != "" {
-				workingDirectory = wd
-			}
-		}
-
-		stepCtx := ctx
-		var cancel context.CancelFunc
-		if step.TimeoutMinutes > 0 {
-			stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMinutes*float64(time.Minute)))
-		}
-
-		var stepResult runner.StepResult
-		if plan.Docker != nil {
-			plan.Docker.Env = env
-			plan.Docker.FilesDir = filesDir
-			stepResult, err = runnerJob.RunDockerAction(stepCtx, *plan.Docker)
-		} else {
-			stepResult, err = runnerJob.Exec(stepCtx, runner.StepSpec{
-				Command:          command,
-				Args:             plan.Args,
-				Shell:            effectiveShell(step, job, wf),
-				Env:              env,
-				WorkingDirectory: workingDirectory,
-				FilesDir:         filesDir,
-			})
-		}
-		if cancel != nil {
-			cancel()
-		}
-		if err != nil {
-			return nil, fmt.Errorf("run step %s: %w", id, err)
-		}
-
-		outputs, err := commands.ParseKeyValueFile(fileSet.OutputFile)
-		if err != nil {
-			return nil, fmt.Errorf("parse outputs for step %s: %w", id, err)
-		}
-		// Many real-world actions (including GitHub's own
-		// actions/hello-world-javascript-action) still emit outputs via
-		// the deprecated stdout-based workflow commands rather than the
-		// $GITHUB_OUTPUT file — real GitHub Actions parses both, so this
-		// does too. The file-based outputs above win on key conflicts,
-		// since that's the current, non-deprecated mechanism.
-		for k, v := range commands.ParseLegacyOutputs(stepResult.Stdout) {
-			if _, exists := outputs[k]; !exists {
-				outputs[k] = v
-			}
-		}
-		envUpdates, err := commands.ParseKeyValueFile(fileSet.EnvFile)
-		if err != nil {
-			return nil, fmt.Errorf("parse env updates for step %s: %w", id, err)
-		}
-		for k, v := range envUpdates {
-			actx.Env[k] = v
-		}
-
-		conclusion := "success"
-		if stepResult.ExitCode != 0 {
-			conclusion = "failure"
-		}
-		actx.Steps[id] = StepOutcome{Outcome: conclusion, Outputs: outputs}
-
-		result.Steps = append(result.Steps, StepReport{
-			ID:         id,
-			Name:       step.Name,
-			Conclusion: conclusion,
-			ExitCode:   stepResult.ExitCode,
-			Stdout:     stepResult.Stdout,
-			Stderr:     stepResult.Stderr,
-		})
-
-		if conclusion == "failure" && !step.ContinueOnError {
+		if report.Conclusion == "failure" && !step.ContinueOnError {
 			result.Conclusion = "failure"
 			break
 		}
@@ -220,6 +125,139 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	result.Outputs = outputs
 
 	return result, nil
+}
+
+// runStep executes exactly one step — a run: command, a JS/Docker uses:
+// step, or a composite uses: step (which recurses via runCompositeSteps,
+// composite_step.go) — against actx, updating actx.Steps[id]/actx.Env as
+// a side effect and returning this step's report. Shared by RunJob's
+// top-level loop and, recursively, by a composite action's own nested
+// step list, so "how a step runs" has exactly one implementation
+// regardless of nesting depth.
+func runStep(ctx context.Context, p runStepParams, actx *Context, step Step, id string) (StepReport, error) {
+	if step.Run != "" && step.Uses != "" {
+		return StepReport{}, fmt.Errorf("step %s: cannot set both run: and uses:", id)
+	}
+
+	if step.If != "" {
+		ok, err := EvalBool(step.If, actx)
+		if err != nil {
+			return StepReport{}, fmt.Errorf("evaluate if: for step %s: %w", id, err)
+		}
+		if !ok {
+			actx.Steps[id] = StepOutcome{Outcome: "skipped"}
+			return StepReport{ID: id, Name: step.Name, Conclusion: "skipped"}, nil
+		}
+	}
+
+	var command string
+	var plan usesStepPlan
+	var err error
+	if step.Uses != "" {
+		plan, err = prepareUsesStep(ctx, p, id, step, actx)
+		if err != nil {
+			return StepReport{}, fmt.Errorf("prepare uses: step %s: %w", id, err)
+		}
+	} else {
+		command, err = SubstituteExpressions(step.Run, actx)
+		if err != nil {
+			return StepReport{}, fmt.Errorf("substitute expressions for step %s: %w", id, err)
+		}
+	}
+
+	filesDir, err := os.MkdirTemp(p.RunnerJob.FilesRoot(), "step-")
+	if err != nil {
+		return StepReport{}, fmt.Errorf("create temp dir for step %s: %w", id, err)
+	}
+	fileSet, err := commands.CreateFileSet(filesDir)
+	if err != nil {
+		return StepReport{}, fmt.Errorf("create workflow command files for step %s: %w", id, err)
+	}
+
+	env := map[string]string{}
+	for k, v := range actx.Env {
+		env[k] = v
+	}
+	for k, v := range step.Env {
+		env[k] = v
+	}
+	env["GITHUB_WORKSPACE"] = p.RunnerJob.WorkspacePath()
+	for k, v := range plan.Env {
+		env[k] = v
+	}
+
+	workingDirectory := p.RunnerJob.WorkspacePath()
+	if step.Uses == "" {
+		if wd := effectiveWorkingDirectory(step, p.Job, p.Workflow); wd != "" {
+			workingDirectory = wd
+		}
+	}
+
+	stepCtx := ctx
+	var cancel context.CancelFunc
+	if step.TimeoutMinutes > 0 {
+		stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMinutes*float64(time.Minute)))
+	}
+
+	var stepResult runner.StepResult
+	if plan.Docker != nil {
+		plan.Docker.Env = env
+		plan.Docker.FilesDir = filesDir
+		stepResult, err = p.RunnerJob.RunDockerAction(stepCtx, *plan.Docker)
+	} else {
+		stepResult, err = p.RunnerJob.Exec(stepCtx, runner.StepSpec{
+			Command:          command,
+			Args:             plan.Args,
+			Shell:            effectiveShell(step, p.Job, p.Workflow),
+			Env:              env,
+			WorkingDirectory: workingDirectory,
+			FilesDir:         filesDir,
+		})
+	}
+	if cancel != nil {
+		cancel()
+	}
+	if err != nil {
+		return StepReport{}, fmt.Errorf("run step %s: %w", id, err)
+	}
+
+	outputs, err := commands.ParseKeyValueFile(fileSet.OutputFile)
+	if err != nil {
+		return StepReport{}, fmt.Errorf("parse outputs for step %s: %w", id, err)
+	}
+	// Many real-world actions (including GitHub's own
+	// actions/hello-world-javascript-action) still emit outputs via
+	// the deprecated stdout-based workflow commands rather than the
+	// $GITHUB_OUTPUT file — real GitHub Actions parses both, so this
+	// does too. The file-based outputs above win on key conflicts,
+	// since that's the current, non-deprecated mechanism.
+	for k, v := range commands.ParseLegacyOutputs(stepResult.Stdout) {
+		if _, exists := outputs[k]; !exists {
+			outputs[k] = v
+		}
+	}
+	envUpdates, err := commands.ParseKeyValueFile(fileSet.EnvFile)
+	if err != nil {
+		return StepReport{}, fmt.Errorf("parse env updates for step %s: %w", id, err)
+	}
+	for k, v := range envUpdates {
+		actx.Env[k] = v
+	}
+
+	conclusion := "success"
+	if stepResult.ExitCode != 0 {
+		conclusion = "failure"
+	}
+	actx.Steps[id] = StepOutcome{Outcome: conclusion, Outputs: outputs}
+
+	return StepReport{
+		ID:         id,
+		Name:       step.Name,
+		Conclusion: conclusion,
+		ExitCode:   stepResult.ExitCode,
+		Stdout:     stepResult.Stdout,
+		Stderr:     stepResult.Stderr,
+	}, nil
 }
 
 func effectiveShell(step Step, job *Job, wf *Workflow) string {

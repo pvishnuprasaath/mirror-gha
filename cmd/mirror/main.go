@@ -129,7 +129,7 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir)
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

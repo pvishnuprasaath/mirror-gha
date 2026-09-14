@@ -28,7 +28,7 @@ type usesStepPlan struct {
 // only for expression substitution inside with: values; the caller still
 // owns the workflow-command file protocol and output parsing, identical
 // to run: steps.
-func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID string, step Step, actx *Context, nodeReady *bool) (usesStepPlan, error) {
+func prepareUsesStep(ctx context.Context, p runStepParams, stepID string, step Step, actx *Context) (usesStepPlan, error) {
 	with := map[string]string{}
 	for k, v := range step.With {
 		val, err := SubstituteExpressions(v, actx)
@@ -64,15 +64,20 @@ func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID s
 
 	var hostSourceDir string
 	if ref.Local {
-		hostSourceDir = filepath.Join(workspaceDir, ref.LocalPath)
+		hostSourceDir = filepath.Join(p.WorkspaceDir, ref.LocalPath)
 	} else {
-		actionDir, err := actions.FetchRemote(ref.Owner, ref.Repo, ref.Ref, cacheRoot)
-		if err != nil {
-			return usesStepPlan{}, fmt.Errorf("fetch action %s: %w", step.Uses, err)
-		}
-		hostSourceDir = actionDir
-		if ref.Subpath != "" {
-			hostSourceDir = filepath.Join(actionDir, ref.Subpath)
+		overrideKey := ref.Owner + "/" + ref.Repo + "@" + ref.Ref
+		if localPath, ok := p.LocalRepositoryOverrides[overrideKey]; ok {
+			hostSourceDir = localPath
+		} else {
+			actionDir, err := actions.FetchRemote(ref.Owner, ref.Repo, ref.Ref, cacheRoot)
+			if err != nil {
+				return usesStepPlan{}, fmt.Errorf("fetch action %s: %w", step.Uses, err)
+			}
+			hostSourceDir = actionDir
+			if ref.Subpath != "" {
+				hostSourceDir = filepath.Join(actionDir, ref.Subpath)
+			}
 		}
 	}
 
@@ -85,17 +90,17 @@ func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID s
 
 	switch {
 	case strings.HasPrefix(metadata.Runs.Using, "node"):
-		if !*nodeReady {
+		if !*p.NodeReady {
 			nodeDir, err := actions.EnsureNode(cacheRoot)
 			if err != nil {
 				return usesStepPlan{}, fmt.Errorf("ensure node runtime: %w", err)
 			}
-			if err := job.CopyToContainer(ctx, nodeDir, actions.ContainerNodePath); err != nil {
+			if err := p.RunnerJob.CopyToContainer(ctx, nodeDir, actions.ContainerNodePath); err != nil {
 				return usesStepPlan{}, fmt.Errorf("copy node runtime into job: %w", err)
 			}
-			*nodeReady = true
+			*p.NodeReady = true
 		}
-		if err := job.CopyToContainer(ctx, hostSourceDir, containerActionPath); err != nil {
+		if err := p.RunnerJob.CopyToContainer(ctx, hostSourceDir, containerActionPath); err != nil {
 			return usesStepPlan{}, fmt.Errorf("copy action %s into job: %w", step.Uses, err)
 		}
 		env := actions.InputEnv(metadata, with)
@@ -111,14 +116,13 @@ func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID s
 
 		// with.args/with.entrypoint override runs.args/runs.entrypoint
 		// wholesale, not merged. runs.args itself is never
-		// expression-substituted here: GitHub's own ${{ inputs.x }}
-		// substitution for runs.args references the action's own local
-		// inputs context, which mirror-gha's expression evaluator doesn't
-		// model (only env/github/runner/steps/needs/matrix/vars) — no
-		// current caller needs it. with.args, already substituted above
-		// against the workflow's own contexts like every other with:
-		// value, is the supported way to parameterize a Docker action's
-		// arguments.
+		// expression-substituted here — no current caller needs it, and
+		// doing it correctly would need this Docker action's own env (not
+		// yet built at this point in the function, unlike composite
+		// actions' BaseEnv) threaded into a temporary Context just for
+		// this. with.args, already substituted above against the
+		// workflow's own contexts like every other with: value, is the
+		// supported way to parameterize a Docker action's arguments.
 		entrypoint := metadata.Runs.Entrypoint
 		if v, ok := with["entrypoint"]; ok {
 			entrypoint = v
