@@ -1,0 +1,17 @@
+# Demonstrates the vars.* expression context, populated from --var /
+# --var-file rather than a repository/organization variable store (which
+# mirror-gha doesn't have — there's no GitHub backend to read it from).
+#
+# Try it (from the repo root):
+#   mirror run --var ENVIRONMENT=staging examples/workflows/vars-context.yml
+name: vars context
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: only runs when ENVIRONMENT is staging
+        if: ${{ vars.ENVIRONMENT == 'staging' }}
+        run: 'echo "Deploying to ${{ vars.ENVIRONMENT }}"'
+      - name: shows what happens with no var supplied
+        run: 'echo "UNSET_VAR is: [${{ vars.UNSET_VAR }}]"'

@@ -86,7 +86,7 @@ func TestRunWorkflow_RunsInDependencyOrder(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunWorkflow_SkipsJobWhenNeedFails(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRunWorkflow_PropagatesJobOutputsToNeeds(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -184,6 +184,28 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 	}
 }
 
+func TestRunWorkflow_VarsReachExpressionContext(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"a": {
+				RunsOn: "ubuntu-latest",
+				Steps: []Step{
+					{ID: "s", Run: "echo a", If: "${{ vars.ENVIRONMENT == 'staging' }}"},
+				},
+			},
+		},
+	}
+
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, map[string]string{"ENVIRONMENT": "staging"})
+	if err != nil {
+		t.Fatalf("RunWorkflow() error = %v", err)
+	}
+	if result.Jobs["a"].Steps[0].Conclusion != "success" {
+		t.Fatalf("Steps[0].Conclusion = %q, want success (vars.ENVIRONMENT should have resolved to 'staging', making the if: true)", result.Jobs["a"].Steps[0].Conclusion)
+	}
+}
+
 func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
 	wf := &Workflow{
 		Name: "test",
@@ -192,7 +214,7 @@ func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
 		},
 	}
 
-	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil)
+	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil, nil)
 	if err == nil {
 		t.Fatal("RunWorkflow() with empty workspaceDir error = nil, want error")
 	}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -88,5 +90,50 @@ func TestParseLocalRepositoryOverrides_MissingEqualsIsError(t *testing.T) {
 	_, err := parseLocalRepositoryOverrides([]string{"actions/checkout@v4"})
 	if err == nil {
 		t.Fatal("parseLocalRepositoryOverrides() error = nil, want error for a value missing '='")
+	}
+}
+
+func TestParseVarFlags_NameEqualsValue(t *testing.T) {
+	vars := parseVarFlags([]string{"MY_VAR=hello"})
+	if vars["MY_VAR"] != "hello" {
+		t.Errorf(`vars["MY_VAR"] = %q, want %q`, vars["MY_VAR"], "hello")
+	}
+}
+
+func TestParseVarFlags_BareNameIsEmptyValue(t *testing.T) {
+	vars := parseVarFlags([]string{"MY_VAR"})
+	val, ok := vars["MY_VAR"]
+	if !ok || val != "" {
+		t.Errorf(`vars["MY_VAR"] = (%q, %v), want ("", true)`, val, ok)
+	}
+}
+
+func TestParseVarFile_SkipsBlankLinesAndComments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".vars")
+	content := "# a comment\n\nFOO=bar\nBARE_VAR\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write var file: %v", err)
+	}
+
+	vars, err := parseVarFile(path)
+	if err != nil {
+		t.Fatalf("parseVarFile() error = %v", err)
+	}
+	if vars["FOO"] != "bar" {
+		t.Errorf(`vars["FOO"] = %q, want %q`, vars["FOO"], "bar")
+	}
+	if val, ok := vars["BARE_VAR"]; !ok || val != "" {
+		t.Errorf(`vars["BARE_VAR"] = (%q, %v), want ("", true)`, val, ok)
+	}
+}
+
+func TestParseVarFile_MissingDefaultFileIsNotAnError(t *testing.T) {
+	vars, err := parseVarFile(filepath.Join(t.TempDir(), ".vars"))
+	if err != nil {
+		t.Fatalf("parseVarFile() error = %v, want nil for a missing default .vars file", err)
+	}
+	if len(vars) != 0 {
+		t.Errorf("vars = %v, want empty", vars)
 	}
 }

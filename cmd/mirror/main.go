@@ -50,6 +50,7 @@ type runMode struct {
 	dryRun                   bool
 	workdir                  string // "" means: resolve from the process's current directory
 	localRepositoryOverrides map[string]string
+	vars                     map[string]string
 }
 
 // stringSliceFlag implements flag.Value for a repeatable string flag —
@@ -69,6 +70,43 @@ func (s *stringSliceFlag) Set(v string) error {
 // mirror-gha only supports the owner/repo@ref key form, not act's
 // additional full-URL form, since mirror-gha doesn't model arbitrary git
 // hosts yet.
+// parseVarFlags parses --var values into a map for the vars.* expression
+// context, matching act's own --var syntax exactly: "NAME=VALUE", or a
+// bare "NAME" (no "=") for an empty-string value.
+func parseVarFlags(values []string) map[string]string {
+	vars := map[string]string{}
+	for _, v := range values {
+		name, value, _ := strings.Cut(v, "=")
+		vars[name] = value
+	}
+	return vars
+}
+
+// parseVarFile reads one "NAME=VALUE" (or bare "NAME") pair per line from
+// path, matching act's own --var-file format — blank lines and
+// "#"-prefixed comment lines are skipped. A missing file is not an
+// error (the default path, ".vars", won't exist in most repos).
+func parseVarFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("read var file %s: %w", path, err)
+	}
+
+	vars := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, _ := strings.Cut(line, "=")
+		vars[name] = value
+	}
+	return vars, nil
+}
+
 func parseLocalRepositoryOverrides(values []string) (map[string]string, error) {
 	overrides := map[string]string{}
 	for _, v := range values {
@@ -92,8 +130,11 @@ func runMain(args []string) int {
 	workdir := fs.String("workdir", "", "directory to bind-mount as the job workspace (default: current directory)")
 	var localRepos stringSliceFlag
 	fs.Var(&localRepos, "local-repository", "override local action resolution: owner/repo[@ref]=local/path (repeatable)")
+	var varFlags stringSliceFlag
+	fs.Var(&varFlags, "var", "variable to make available to the vars.* context: NAME=VALUE or bare NAME (repeatable)")
+	varFile := fs.String("var-file", ".vars", "file with NAME=VALUE vars.* entries, one per line (missing file is not an error)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] [--local-repository owner/repo[@ref]=local/path] <workflow.yml>")
+		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] [--local-repository owner/repo[@ref]=local/path] [--var NAME=VALUE] [--var-file <path>] <workflow.yml>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -106,13 +147,22 @@ func runMain(args []string) int {
 		return 1
 	}
 
+	vars, err := parseVarFile(*varFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for k, v := range parseVarFlags(varFlags) {
+		vars[k] = v
+	}
+
 	rest := fs.Args()
 	if len(rest) < 1 {
 		fs.Usage()
 		return 1
 	}
 
-	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides})
+	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides, vars: vars})
 }
 
 // runCommand parses the workflow at path and, depending on mode, either
@@ -167,7 +217,7 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides)
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

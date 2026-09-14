@@ -114,6 +114,13 @@ Unreleased until the first `v0.1.0`.
   reference to resolve from a local directory, checked before the
   network fetch. Verified for real: a reference to a repo that cannot
   exist on GitHub resolves correctly with the flag and fails without it.
+- **Real `vars.*` context source.** `--var NAME=VALUE` (repeatable, bare
+  `--var NAME` for an empty value) and `--var-file <path>` (default
+  `.vars`, one entry per line, missing file not an error) — matching
+  act's own `--var`/`--var-file` flags exactly. `--var` overrides
+  `--var-file` on conflict. Verified for real: an `if:` gated on
+  `vars.ENVIRONMENT == 'staging'` is skipped with no flags, runs with
+  `--var ENVIRONMENT=staging`, and runs identically via `--var-file`.
 
 ### Fixed
 

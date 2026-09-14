@@ -24,6 +24,7 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`uses-docker-image.yml`](workflows/uses-docker-image.yml) | `uses:` with a raw `docker://image:tag` reference — no `action.yml`, `entrypoint`/`args` from `with:`, proves the job workspace bind mount and network join both work |
 | [`uses-composite-action.yml`](workflows/uses-composite-action.yml) | `uses:` with a composite action ([`actions/greet-composite-action`](workflows/actions/greet-composite-action/)) — nested `run:`/`uses:` steps (including a nested JS action), `inputs.*`, and its own `outputs:` bridging a nested step's output back up |
 | [`uses-local-repository.yml`](workflows/uses-local-repository.yml) | `--local-repository owner/repo@ref=local/path` — overrides a Marketplace-style reference to resolve from a local directory instead of fetching over the network |
+| [`vars-context.yml`](workflows/vars-context.yml) | The `vars.*` expression context, populated via `--var NAME=VALUE` or `--var-file` (no repository/organization variable store exists to read from otherwise) |
 
 ## What's not shown here (yet)
 

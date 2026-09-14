@@ -148,11 +148,14 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
 - **`defaults.run.shell` / `defaults.run.working-directory`** at workflow
   and job level, with the real GitHub Actions precedence: step overrides
   job defaults, which override workflow defaults.
-- **A local-only `vars` context** — there's no repository/organization
-  variable store to read from yet (that's part of the GitHub API shim,
-  not built), so `vars.*` currently just resolves to nothing unless a
-  future CLI flag populates it. Documented here so it's clear this is a
-  stub, not a silent no-op you'd have to discover by trial and error.
+- **A local `vars` context** — real GitHub Actions populates this from a
+  repository/organization variable store mirror-gha has no equivalent of
+  (no GitHub API shim exists), so values come from the CLI instead:
+  `--var NAME=VALUE` (repeatable; bare `--var NAME` sets an empty value)
+  and `--var-file <path>` (default `.vars`, one `NAME=VALUE`/bare `NAME`
+  per line, blank lines and `#` comments skipped, missing file not an
+  error) — matching act's own `--var`/`--var-file` flags exactly. `--var`
+  entries override `--var-file` entries on conflict.
 
 See [`examples/`](../examples/) for a runnable demonstration of each of
 these.
