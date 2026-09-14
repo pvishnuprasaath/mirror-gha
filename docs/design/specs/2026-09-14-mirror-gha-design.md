@@ -599,6 +599,127 @@ exercises the full real stack (a real JS action, a real HTTP call from
 inside the container back to the host server, real disk persistence
 across process invocations) with no fakes anywhere in the chain.
 
+## Artifacts Runtime
+
+**Scope:** `actions/upload-artifact` and `actions/download-artifact`
+working for real — both the legacy v3 REST protocol and the current v4
+protocol, together in one sub-project (unlike Cache Runtime, this one
+wasn't split further — the two protocols share one server and one
+storage layer, so splitting them would mean building the same
+scaffolding twice).
+
+Every design decision below was checked against act's actual source
+(`nektos/act`, `pkg/artifacts/`), per the standing direction to treat
+it as the reference implementation.
+
+**No new action-type dispatch — same property Cache Runtime already
+established.** `actions/upload-artifact`/`download-artifact` are
+themselves bundled JS actions; they run through mirror-gha's existing
+JS-actions machinery completely unmodified once the right env vars are
+present. Nothing in `prepareUsesStep`'s dispatch changes.
+
+**Two real protocol generations, confirmed field-for-field against
+act's source, not assumed from `@actions/toolkit` memory:**
+
+- **v3** (`actions/upload-artifact@v3` and earlier) — a REST-ish
+  protocol: `POST /_apis/pipelines/workflows/:runId/artifacts` reserves
+  a container (`{fileContainerResourceUrl}`), `PUT
+  /upload/:runId?itemPath=...` uploads raw bytes (`Content-Range` for
+  chunked uploads, `Content-Encoding: gzip` marked by a literal
+  `.gz__` filename suffix — the client controls compression, act
+  doesn't compress server-side), `PATCH .../artifacts` finalizes as a
+  pure no-op, `GET .../artifacts` lists (`{count, value: [{name,
+  fileContainerResourceUrl}]}`), `GET
+  /download/:container?itemPath=...` lists a container's files
+  (`{value: [{path, itemType, contentLocation}]}`), `GET
+  /artifact/*path` streams raw bytes (falling back to a `.gz__`-suffixed
+  path if the plain one doesn't exist). All plain `encoding/json`,
+  camelCase fields — no protobuf anywhere in v3.
+- **v4** (current default) — routes at twirp-*shaped* URL paths
+  (`/twirp/github.actions.results.api.v1.ArtifactService/{CreateArtifact,
+  FinalizeArtifact,ListArtifacts,GetSignedArtifactURL,DeleteArtifact,
+  UploadArtifact,DownloadArtifact}`) but genuinely plain HTTP+JSON
+  underneath — act uses real protobuf-generated Go types
+  (`google.golang.org/protobuf`) and `protojson` to (de)serialize them,
+  but there's no actual twirp wire framing or protobuf-over-the-wire
+  bytes involved, just JSON bodies at those specific paths. **A real
+  correction found only by reading act's `.pb.go` files directly, not
+  its own doc comment**: the top-of-file comment in act's
+  `artifacts_v4.go` shows sample requests in snake_case
+  (`workflow_run_backend_id`), but `protojson.Marshal` actually emits
+  each field's `json_name` variant from the `.pb.go` struct tags, which
+  is **camelCase** (`workflowRunBackendId`) — the doc comment is
+  misleading, the generated code is ground truth.
+
+**mirror-gha reproduces the v4 wire shape without a protobuf
+dependency.** Since the actual wire format is plain JSON regardless of
+what act uses internally to produce it, mirror-gha hand-writes
+`encoding/json` structs with the same camelCase field names — no
+`google.golang.org/protobuf` dependency, keeping the project's
+zero-external-Go-dependency record intact (matching every prior
+sub-project's "no new dependencies" constraint). `CreateArtifact` ->
+`{ok, signedUploadUrl}`, `FinalizeArtifact` -> `{ok, artifactId}` (an
+FNV-32a hash of the artifact name, matching act's own
+`artifactNameToID` — not a real incrementing database id),
+`ListArtifacts` -> `{artifacts: [...]}`, `GetSignedArtifactURL` ->
+`{signedUrl}`, `DeleteArtifact` -> `{ok, artifactId}`.
+`UploadArtifact`/`DownloadArtifact` carry the raw zip bytes (the real
+v4 client always zips client-side before uploading — act's server
+never unzips, it stores the blob as-is at
+`<baseDir>/<runId>/<artifactName>/<artifactName>.zip`).
+
+**Signed URLs are simulated, not real — and mirror-gha simplifies
+further than act does here.** act's `CreateArtifact`/
+`GetSignedArtifactURL` build a URL pointing back at its *own* server
+(no real separate blob-storage origin), HMAC-signed with a hardcoded
+static key purely to shape-match the real protocol's signed-URL
+concept. mirror-gha points the signed URL back at its own server too,
+but skips the HMAC signing entirely — there is no trust boundary to
+protect on a local, single-user server, so replicating act's fake
+signature would be complexity with no payoff, a deliberate divergence
+beyond what act itself already simplified.
+
+**Storage does not persist across `mirror run` invocations — the
+opposite of Cache Runtime, for a real semantic reason.** A cache's
+whole point is surviving to a later run; an artifact's isn't — real
+GitHub Actions artifacts belong to one workflow run (produced by one
+job, consumed by a later job in the *same* run, or downloaded
+afterward via the API/UI). mirror-gha's artifact store is a fresh
+`os.MkdirTemp` directory per `mirror run` invocation, not deleted when
+the run finishes (its path is printed at the end of the run) so a user
+can inspect what got uploaded — but never reused as a restore source
+by a *later* invocation the way the cache store deliberately is.
+
+**Server lifecycle and env injection — always-on, matching Cache
+Runtime's own precedent, a deliberate divergence from act.** act's own
+artifact server is opt-in (`--artifact-server-path`, empty by default —
+no flag, no server, no env injection at all), unlike its cache server
+(on by default). mirror-gha doesn't carry that inconsistency forward:
+both servers start together, unconditionally, in the same place
+`cmd/mirror/main.go`'s `runCommand` already starts the cache server —
+consistent with this project's low-friction positioning ("things just
+work locally, no flags to discover first"), which the Cache Runtime
+sub-project already established as the project's own norm rather than
+act's. `ACTIONS_RUNTIME_URL` and `ACTIONS_RESULTS_URL` are both set to
+the artifact server's own base URL (matching act finding both env vars
+carry the identical value — one URL serves v3 and v4 traffic, there's
+no separate `ACTIONS_ARTIFACT_URL`), merged into the same
+`JobRunOptions.ExtraEnv` map the cache server's own env vars already
+populate. The existing fixed placeholder `ACTIONS_RUNTIME_TOKEN` is
+reused as-is — no new token needed, since neither this server nor
+act's own validates it.
+
+**Testing:** unit tests per route (v3 and v4 separately) via `httptest`,
+no Docker needed for these. Real end-to-end proof against both a
+current (v4-protocol) and a legacy pinned (v3-protocol) version of the
+real, unmodified `actions/upload-artifact`/`download-artifact` actions,
+in a two-job workflow (one job uploads, a later job downloads) —
+research flagged that exactly which real client version maps to which
+protocol wasn't verified against a live client this session (only
+inferred from act's own server-side routes), so this needs the same
+"verify for real, fix what's found" discipline that caught three real
+bugs during Cache Runtime's own end-to-end verification.
+
 ## Data flow
 
 ```
