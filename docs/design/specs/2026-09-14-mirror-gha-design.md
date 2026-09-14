@@ -353,6 +353,139 @@ a working Docker daemon at all (its own OS-specific build tags gate the
 whole container package, not Docker actions in particular). No new
 restriction needed beyond what already exists.
 
+## Composite Actions Runtime
+
+**Scope:** `uses:` resolving to a composite action (`runs.using: composite`)
+— its own `action.yml` carries a `runs.steps:` list of nested `run:`/
+`uses:` steps (which may themselves be JS, Docker, or another composite
+action, recursively). This is the last of the three `runs.using` kinds —
+after this, no `runs.using` value is rejected as unsupported anymore.
+
+Every design decision below was checked against act's actual source
+(`nektos/act`, cloned fresh for this sub-project).
+
+**Architectural fit — the same step-execution machinery, not a
+parallel executor.** This was the central question this sub-project
+needed act's source to answer. Confirmed directly:
+`action_composite.go`'s `compositeExecutor` builds each nested step via
+`stepFactoryImpl.newStep` — the **exact same** factory
+`job_executor.go` uses for a job's own top-level steps
+(`job_executor.go:76`). Composite nesting in act is nothing more than
+"call the same step dispatch against a different `RunContext`" — no
+separate isolation boundary either: `newCompositeRunContext` reuses the
+**same `JobContainer`** as the parent, so a composite action's steps run
+in the same container a `run:` step would. mirror-gha follows this
+exactly: `RunJob`'s per-step execution body (the `if:` check, env/file
+setup, dispatch to `Exec`/`RunDockerAction`, output parsing, and
+bookkeeping) is extracted into a reusable `runStep` function that both
+the top-level job loop and a new `runCompositeSteps` call — not two
+independent implementations of "run a step."
+
+**The `inputs` context is not new storage — it's `INPUT_*` env vars
+re-exposed.** Checked act's `getEvaluatorInputs`
+(`expression.go:481`): `for k, v := range env { if
+strings.HasPrefix(k, "INPUT_") { inputs[...] = v } }`. It isn't
+composite-specific machinery at all — any `RunContext`'s env
+produces an `inputs.*` context generically; it's simply empty outside
+an action invocation, since normal job steps never set `INPUT_*` on
+themselves. mirror-gha's `Context.resolvePath` gains an `"inputs"`
+case that reverses the same `INPUT_<TRANSFORMED_NAME>` transform
+already used everywhere else (`internal/actions.InputEnv`) against
+`Context.Env` — duplicated locally rather than cross-imported, same
+precedent as `requireDocker`/`requireNetwork` being duplicated
+per-package throughout this project. This is a structural
+requirement, not a nice-to-have: without it, a composite action's own
+nested steps have no way to reference its declared inputs at all,
+making composite support close to useless.
+
+**Nested step namespace and output surfacing.** act's composite
+sub-context gets a fresh `StepResults` map (`newCompositeRunContext`,
+`action_composite.go:47`) — a composite's nested step IDs never
+collide with or leak into the calling job's `steps.*`. After the
+nested steps finish, the composite's own declared `outputs:` (each a
+`value: ${{ steps.x.outputs.y }}` expression, evaluated **against the
+nested scope**) get written onto the *parent* context as the outer
+`uses:` step's own output (`action_composite.go:102-107`,
+`rc.setOutput(...)`). mirror-gha mirrors this with a child `Context` —
+fresh `Steps` map, `Env` seeded from the parent's env plus this
+composite's own `INPUT_*` vars and its own `GITHUB_ACTION_PATH` — and
+evaluates each `ActionOutput.Value` against that child context once
+`runCompositeSteps` returns, surfacing the results as the calling
+`uses:` step's `steps.<id>.outputs`.
+
+**Metadata shape changes** (`internal/actions/metadata.go`):
+- `ActionRuns` gains `Steps []ActionStep` — a small struct local to
+  `internal/actions` (`ID`, `Name`, `Run`, `Uses`, `Shell`,
+  `WorkingDirectory`, `With`, `Env`, `If`, `ContinueOnError`),
+  deliberately not `engine.Step` itself: `internal/engine` already
+  imports `internal/actions`, so the reverse import would cycle.
+  `internal/engine/uses_step.go` converts each `ActionStep` into an
+  `engine.Step` at the call site — a small, one-directional conversion,
+  not duplicated execution logic.
+- `ActionMetadata.Outputs` changes from `map[string]interface{}` to
+  `map[string]ActionOutput{Description, Value string}`. `Value` is the
+  one genuinely new field: for JS/Docker actions `outputs:` is purely
+  descriptive (the action itself writes `$GITHUB_OUTPUT` directly), but
+  a composite action's outputs are *computed* from its own `Value`
+  expression — this field was structurally absent because nothing
+  needed it before now.
+
+**Shell/working-directory defaults are not inherited.** Checked act's
+`step_run.go:168`: `step.WorkflowShell =
+rc.Run.Job().Defaults.Run.Shell` — for a composite's nested step, `rc`
+is the child context, whose synthetic `Job()` is an empty
+`model.Job{}` (`newCompositeRunContext`), so this always resolves to
+`""` and falls through to the OS/container shell-detection fallback,
+**never** the calling workflow's `defaults.run.shell`. mirror-gha's
+`runCompositeSteps` calls `runStep` with a synthetic empty `&Job{}`/
+`&Workflow{}` (no `Defaults`) for exactly this reason — `effectiveShell`/
+`effectiveWorkingDirectory` already fall back to the built-in default
+when nothing is set, so no new fallback logic is needed, just the right
+(empty) inputs to the existing one.
+
+**Recursion — a deliberate divergence from act, not parity.**
+Composite-in-composite works for free in act's model (the same dispatch
+recurses on `runs.using` again for any nested `uses:`), and act's source
+has no depth cap or cycle detection anywhere in
+`action_composite.go`/`step_action_local.go` — unbounded, by omission.
+mirror-gha adds a fixed recursion-depth cap (10) with a clear error
+instead of matching this exactly: act's action references are content-
+addressed fetches over the network, making a self-referencing cycle
+rare in practice; mirror-gha's local-path (`./`) resolution makes a
+composite action accidentally referencing itself a real, easy-to-hit
+crash (unbounded Go call-stack recursion) rather than a theoretical one.
+No real action nests anywhere near 10 deep — this is cheap insurance,
+not a functional limitation.
+
+**Node runtime and job-container sharing.** The same per-job `nodeReady`
+bool already threaded through `prepareUsesStep` is threaded through
+`runCompositeSteps` too — a JS action nested inside a composite action
+shares the one pinned Node copy-in per job, not one per composite
+invocation, consistent with how top-level JS steps already behave.
+
+## `--local-repository`
+
+**Scope:** override local action resolution for testing an in-progress
+action before merging/tagging it — the same problem act's own
+`--local-repository` flag solves.
+
+**Exact flag, matched to act's syntax** (`cmd/root.go:130`):
+`--local-repository owner/repo[@ref]=local/path` (or a full URL in place
+of `owner/repo`), repeatable. act parses each value via
+`strings.Cut(l, "=")`, matching an override on `owner/repo@ref` (or the
+full URL form). mirror-gha's `mirror run` gains the identical flag,
+parsed into a `map[string]string` keyed the same way.
+
+**Wiring — a decorator in front of the real fetch, not a code path
+inside it.** act's implementation, `LocalRepositoryCache`
+(`pkg/runner/local_repository_cache.go:19`), wraps the real
+`ActionCache`: `Fetch` checks the override map first, and only falls
+through to the real network fetch on a miss. mirror-gha follows the
+same shape: the override map is threaded through `JobRunOptions` into
+`prepareUsesStep`, checked before calling `actions.FetchRemote` — a
+hit returns the local path directly, skipping the fetch/cache/tar-
+extract path entirely, with no change to `FetchRemote` itself.
+
 ## Data flow
 
 ```
