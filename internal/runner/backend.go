@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"runtime"
 )
 
 // StepResult is what a Job reports after executing one step.
@@ -144,6 +145,11 @@ func SelectBackend(runsOn string) (Backend, error) {
 	switch runsOn {
 	case "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04":
 		return NewLinuxDockerBackend(), nil
+	case "macos-latest", "macos-15", "macos-14", "macos-13":
+		if runtime.GOOS != "darwin" {
+			return nil, fmt.Errorf("runner %q requires running mirror-gha on a Mac host (this host is %s) — macOS cannot be virtualized on non-Apple hardware, so cross-host macOS execution isn't possible", runsOn, runtime.GOOS)
+		}
+		return NewHostBackend(), nil
 	default:
 		return nil, &ErrUnsupportedRunner{RunsOn: runsOn}
 	}
