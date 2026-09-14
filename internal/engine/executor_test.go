@@ -515,3 +515,79 @@ func TestRunJob_ExportsGitHubContextAsEnvVars(t *testing.T) {
 		t.Error(`Env["GITHUB_EVENT_NAME"] is empty, want a real value`)
 	}
 }
+
+func TestRunJob_ContainerEnvMergesIntoStepEnv(t *testing.T) {
+	// A bare RawContainer node representing container: {env: {FOO: bar}}
+	// isn't easy to hand-construct outside YAML parsing, so this test
+	// parses a real workflow instead of hand-building a Job.
+	wf, err := Parse([]byte(`
+name: t
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+      env:
+        FOO: bar
+    steps:
+      - id: s
+        run: echo hi
+        shell: sh
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+	_, err = RunJob(context.Background(), wf, &job, backend, JobRunOptions{
+		WorkspaceDir: t.TempDir(),
+		JobID:        "build",
+	})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if backend.lastJob == nil {
+		t.Fatal("backend.lastJob is nil, want StartJob to have been called")
+	}
+	if len(backend.lastJob.execSpecs) != 1 {
+		t.Fatalf("execSpecs = %v, want exactly 1 step executed", backend.lastJob.execSpecs)
+	}
+	if got := backend.lastJob.execSpecs[0].Env["FOO"]; got != "bar" {
+		t.Errorf("step Env[FOO] = %q, want %q (container.env should merge into every step's env)", got, "bar")
+	}
+}
+
+func TestToRunnerContainerSpec_Nil(t *testing.T) {
+	spec, err := toRunnerContainerSpec(nil)
+	if err != nil {
+		t.Fatalf("toRunnerContainerSpec(nil) error = %v", err)
+	}
+	if spec != nil {
+		t.Errorf("toRunnerContainerSpec(nil) = %v, want nil", spec)
+	}
+}
+
+func TestToRunnerContainerSpec_ResolvesCredentials(t *testing.T) {
+	spec, err := toRunnerContainerSpec(&ContainerSpec{
+		Image:       "ghcr.io/owner/image:tag",
+		Credentials: map[string]string{"username": "u", "password": "p"},
+	})
+	if err != nil {
+		t.Fatalf("toRunnerContainerSpec() error = %v", err)
+	}
+	if spec.Image != "ghcr.io/owner/image:tag" || spec.Username != "u" || spec.Password != "p" {
+		t.Errorf("toRunnerContainerSpec() = %+v, want Image=ghcr.io/owner/image:tag Username=u Password=p", spec)
+	}
+}
+
+func TestToRunnerContainerSpec_InvalidCredentialsError(t *testing.T) {
+	_, err := toRunnerContainerSpec(&ContainerSpec{
+		Image:       "node:20",
+		Credentials: map[string]string{"username": "u"},
+	})
+	if err == nil {
+		t.Fatal("toRunnerContainerSpec() error = nil, want error for malformed credentials")
+	}
+}

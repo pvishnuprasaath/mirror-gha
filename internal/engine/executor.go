@@ -39,6 +39,31 @@ type JobRunOptions struct {
 	WorkspaceDir             string // host directory bind-mounted as the job's workspace
 	LocalRepositoryOverrides map[string]string
 	ExtraEnv                 map[string]string
+	JobID                    string // names the job for Docker network naming when it has services:
+}
+
+// toRunnerContainerSpec converts an engine ContainerSpec (YAML-shaped,
+// with a raw credentials map) into a runner.ContainerSpec (already
+// credential-validated, Username/Password resolved) — the boundary where
+// credential validation happens, keeping the runner package free of any
+// YAML/credentials-map concerns.
+func toRunnerContainerSpec(spec *ContainerSpec) (*runner.ContainerSpec, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	username, password, err := validateCredentials(spec.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("container credentials: %w", err)
+	}
+	return &runner.ContainerSpec{
+		Image:    spec.Image,
+		Env:      spec.Env,
+		Ports:    spec.Ports,
+		Volumes:  spec.Volumes,
+		Options:  spec.Options,
+		Username: username,
+		Password: password,
+	}, nil
 }
 
 // runStepParams bundles what varies between a job's own top-level steps
@@ -83,7 +108,33 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	}
 	result := &JobResult{Conclusion: "success"}
 
-	runnerJob, err := backend.StartJob(ctx, "job", opts.WorkspaceDir, nil, nil)
+	containerSpec, err := job.Container()
+	if err != nil {
+		return nil, fmt.Errorf("job container: %w", err)
+	}
+	if containerSpec != nil {
+		for k, v := range containerSpec.Env {
+			actx.Env[k] = v
+		}
+	}
+	runnerContainerSpec, err := toRunnerContainerSpec(containerSpec)
+	if err != nil {
+		return nil, err
+	}
+	runnerServices := make(map[string]runner.ContainerSpec, len(job.Services))
+	for name, spec := range job.Services {
+		converted, err := toRunnerContainerSpec(&spec)
+		if err != nil {
+			return nil, fmt.Errorf("service %s: %w", name, err)
+		}
+		runnerServices[name] = *converted
+	}
+
+	jobID := opts.JobID
+	if jobID == "" {
+		jobID = "job"
+	}
+	runnerJob, err := backend.StartJob(ctx, jobID, opts.WorkspaceDir, runnerContainerSpec, runnerServices)
 	if err != nil {
 		return nil, fmt.Errorf("start job: %w", err)
 	}

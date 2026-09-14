@@ -103,6 +103,7 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 				LocalRepositoryOverrides: localRepositoryOverrides,
 				Vars:                     vars,
 				ExtraEnv:                 extraEnv,
+				JobID:                    name,
 			})
 			if cancel != nil {
 				cancel()
