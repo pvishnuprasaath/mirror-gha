@@ -73,3 +73,20 @@ func TestRunMain_WorkdirFlag(t *testing.T) {
 		t.Fatalf("runMain([--workdir, ...]) = %d, want 0", exitCode)
 	}
 }
+
+func TestParseLocalRepositoryOverrides_ValidEntries(t *testing.T) {
+	overrides, err := parseLocalRepositoryOverrides([]string{"actions/checkout@v4=/tmp/my-checkout"})
+	if err != nil {
+		t.Fatalf("parseLocalRepositoryOverrides() error = %v", err)
+	}
+	if overrides["actions/checkout@v4"] != "/tmp/my-checkout" {
+		t.Errorf(`overrides["actions/checkout@v4"] = %q, want %q`, overrides["actions/checkout@v4"], "/tmp/my-checkout")
+	}
+}
+
+func TestParseLocalRepositoryOverrides_MissingEqualsIsError(t *testing.T) {
+	_, err := parseLocalRepositoryOverrides([]string{"actions/checkout@v4"})
+	if err == nil {
+		t.Fatal("parseLocalRepositoryOverrides() error = nil, want error for a value missing '='")
+	}
+}

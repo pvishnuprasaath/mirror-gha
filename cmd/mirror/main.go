@@ -45,10 +45,40 @@ func main() {
 // runMode selects which of the mutually exclusive `run` behaviors to
 // perform: normal execution, or one of the read-only introspection modes.
 type runMode struct {
-	list    bool
-	graph   bool
-	dryRun  bool
-	workdir string // "" means: resolve from the process's current directory
+	list                     bool
+	graph                    bool
+	dryRun                   bool
+	workdir                  string // "" means: resolve from the process's current directory
+	localRepositoryOverrides map[string]string
+}
+
+// stringSliceFlag implements flag.Value for a repeatable string flag —
+// the stdlib flag package has no built-in for this. --local-repository
+// can be passed multiple times, once per overridden action reference.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// parseLocalRepositoryOverrides parses --local-repository values into a
+// map keyed by "owner/repo@ref", matching act's own flag syntax
+// (--local-repository owner/repo[@ref]=local/path, repeatable) — except
+// mirror-gha only supports the owner/repo@ref key form, not act's
+// additional full-URL form, since mirror-gha doesn't model arbitrary git
+// hosts yet.
+func parseLocalRepositoryOverrides(values []string) (map[string]string, error) {
+	overrides := map[string]string{}
+	for _, v := range values {
+		key, path, ok := strings.Cut(v, "=")
+		if !ok {
+			return nil, fmt.Errorf("--local-repository %q must be in the form owner/repo[@ref]=local/path", v)
+		}
+		overrides[key] = path
+	}
+	return overrides, nil
 }
 
 // runMain parses `run` subcommand flags and dispatches to runCommand.
@@ -60,12 +90,20 @@ func runMain(args []string) int {
 	graph := fs.Bool("graph", false, "print the job dependency graph without running")
 	dryRun := fs.Bool("dryrun", false, "run the full needs/matrix/if orchestration without executing any step")
 	workdir := fs.String("workdir", "", "directory to bind-mount as the job workspace (default: current directory)")
+	var localRepos stringSliceFlag
+	fs.Var(&localRepos, "local-repository", "override local action resolution: owner/repo[@ref]=local/path (repeatable)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] <workflow.yml>")
+		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] [--local-repository owner/repo[@ref]=local/path] <workflow.yml>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 1 // flag package already printed the error and usage
+	}
+
+	overrides, err := parseLocalRepositoryOverrides(localRepos)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	rest := fs.Args()
@@ -74,7 +112,7 @@ func runMain(args []string) int {
 		return 1
 	}
 
-	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir})
+	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides})
 }
 
 // runCommand parses the workflow at path and, depending on mode, either
@@ -129,7 +167,7 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, nil)
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

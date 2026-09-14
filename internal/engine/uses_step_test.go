@@ -157,6 +157,35 @@ runs:
 	}
 }
 
+func TestPrepareUsesStep_LocalRepositoryOverrideSkipsFetch(t *testing.T) {
+	workspaceDir := t.TempDir()
+	overrideDir := t.TempDir()
+	actionYML := "name: 'Overridden Action'\nruns:\n  using: 'node20'\n  main: 'index.js'\n"
+	if err := os.WriteFile(filepath.Join(overrideDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
+	step := Step{Uses: "some-owner/some-repo@v1"}
+	actx := NewContext(&Workflow{}, &Job{})
+	nodeReady := true
+	p := runStepParams{
+		RunnerJob:                job,
+		WorkspaceDir:             workspaceDir,
+		NodeReady:                &nodeReady,
+		LocalRepositoryOverrides: map[string]string{"some-owner/some-repo@v1": overrideDir},
+	}
+
+	plan, err := prepareUsesStep(context.Background(), p, "id", step, actx)
+	if err != nil {
+		t.Fatalf("prepareUsesStep() error = %v (should use the override, never fetch over the network)", err)
+	}
+	wantArgs := []string{"/mirror-node/bin/node", "/mirror-actions/id/index.js"}
+	if len(plan.Args) != 2 || plan.Args[0] != wantArgs[0] || plan.Args[1] != wantArgs[1] {
+		t.Errorf("Args = %v, want %v", plan.Args, wantArgs)
+	}
+}
+
 func TestPrepareUsesStep_RawDockerImage(t *testing.T) {
 	workspaceDir := t.TempDir()
 	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
