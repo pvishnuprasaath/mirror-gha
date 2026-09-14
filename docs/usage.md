@@ -104,9 +104,21 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   vars exactly as GitHub Actions does (dashes preserved in input names —
   which is exactly why `uses:` steps exec Node directly with no
   intermediate shell: a shell silently drops env vars with dashed names
-  before it execs children). Docker and composite actions
-  (`runs.using: docker`/`composite`) are rejected with a clear error, not
-  approximated.
+  before it execs children). Composite actions (`runs.using: composite`)
+  are rejected with a clear error, not approximated.
+- **`uses:` Docker actions** — a raw `docker://image:tag` reference, or a
+  Marketplace/local action whose `runs.image` names a Dockerfile (built
+  and cached by tag, rebuilt only if the tag doesn't already exist). Runs
+  as its own container — not exec'd into the job's container, since a
+  Docker action's image is frequently a different base OS entirely —
+  joined to the job container's network namespace so `localhost`
+  service-container access still works, with the job workspace, `with:`/
+  `INPUT_*`, and `$GITHUB_OUTPUT` all working the same way they do
+  everywhere else. `/var/run/docker.sock` is mounted into every Docker
+  action container unconditionally, matching real GitHub-hosted runners —
+  this gives any Docker action, including an unmodified Marketplace one,
+  full host Docker daemon control the moment it runs. Composite actions
+  (`runs.using: composite`) are still rejected with a clear error.
 - **Multi-job workflows with `needs:`** — jobs run in dependency order; a
   job whose `needs:` didn't all succeed is reported `skipped`, not run. A
   job's declared `outputs:` are available to dependents via
@@ -139,9 +151,9 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Docker and composite actions (`runs.using: docker`/`composite`) — JS
-  actions and local action paths work; `docker://...` and composite
-  step-graph expansion don't yet
+- Composite actions (`runs.using: composite`) — JS and Docker actions
+  (Marketplace, local, and raw `docker://` references) all work; composite
+  step-graph expansion doesn't yet
 - Artifacts (`actions/upload-artifact` / `download-artifact`) and caching
   (`actions/cache`)
 - `matrix.include` / `matrix.exclude`
@@ -164,9 +176,10 @@ for the order these are being built in.
   bundles by default) may behave differently locally until that
   fidelity work lands.
 - **Use it for the fast, iterative loop** — testing a shell-script step,
-  a conditional, matrix, multi-job dependency, or JS-action change
+  a conditional, matrix, multi-job dependency, or JS/Docker-action change
   without waiting on a real CI run — not yet as a full replacement for CI
-  on workflows using Docker/composite actions, artifacts, or caching.
-- **File an issue if a workflow using only `run:`/`uses:` (JS or local)
-  steps behaves differently locally than it does on GitHub Actions.**
-  That's squarely in scope today and is a real bug, not a known gap.
+  on workflows using composite actions, artifacts, or caching.
+- **File an issue if a workflow using only `run:`/`uses:` (JS, Docker, or
+  local) steps behaves differently locally than it does on GitHub
+  Actions.** That's squarely in scope today and is a real bug, not a
+  known gap.

@@ -79,6 +79,22 @@ Unreleased until the first `v0.1.0`.
   against both a local fixture action and
   `actions/hello-world-javascript-action` (GitHub's own official demo
   action).
+- **`uses:` Docker actions.** A raw `docker://image:tag` reference, or a
+  Marketplace/local action whose `runs.image` names a Dockerfile, runs as
+  its own sibling container (`docker run --rm`, not `docker exec` into the
+  job's own container — matches act's real model, checked against its
+  source). Dockerfile-based action images are built once and cached by
+  tag (`mirror-gha-<sanitized-action-ref>:latest`). The container joins
+  the job container's network namespace (`--network container:<id>`) so
+  `localhost` service-container access keeps working, bind-mounts the job
+  workspace and the action's own source (repo-based actions), and mounts
+  `/var/run/docker.sock` unconditionally, matching real GitHub-hosted
+  runners — a documented trust tradeoff, not an oversight. `with:` inputs
+  map to `INPUT_*` env vars via the same transform JS actions already use.
+  Composite actions are still rejected with a clear error. Verified for
+  real against a raw `docker://alpine` step and a hand-written
+  Dockerfile-based local action fixture, including confirming the image
+  build is genuinely cached (not rebuilt) on a second run.
 
 ### Fixed
 
@@ -104,9 +120,8 @@ Unreleased until the first `v0.1.0`.
 
 ### Known limitations
 
-See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) — Docker
-and composite `uses:` actions, artifacts/caching,
-`matrix.include`/`exclude`, `services:`/`container:` job fields, and
-Windows/macOS runners are not implemented yet, by design and in that
-order (see the
+See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) — composite
+`uses:` actions, artifacts/caching, `matrix.include`/`exclude`,
+`services:`/`container:` job fields, and Windows/macOS runners are not
+implemented yet, by design and in that order (see the
 [design spec](docs/design/specs/2026-09-14-mirror-gha-design.md)).

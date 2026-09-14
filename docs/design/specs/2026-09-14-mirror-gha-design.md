@@ -221,6 +221,8 @@ against the job workspace, no override.
 
 ## Docker Actions Runtime
 
+**Implemented.**
+
 **Scope:** `uses:` resolving to a Docker action (`runs.using: docker`) —
 a raw `docker://image:tag` reference, or a Marketplace/local action
 whose `runs.image` names a Dockerfile shipped alongside its

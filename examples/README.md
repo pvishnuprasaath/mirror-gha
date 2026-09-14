@@ -20,13 +20,15 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`workspace.yml`](workflows/workspace.yml) | The job workspace — real project files visible, default working directory, `github.workspace`/`$GITHUB_WORKSPACE`, writes land back on the real host filesystem |
 | [`uses-local-action.yml`](workflows/uses-local-action.yml) | `uses:` with a local JS action ([`actions/hello-action`](workflows/actions/hello-action/), a hand-written fixture with no npm dependencies) — real Node execution, `with:` inputs, output read back via `steps.<id>.outputs` |
 | [`uses-marketplace-action.yml`](workflows/uses-marketplace-action.yml) | `uses:` with a real, unmodified Marketplace action (`actions/hello-world-javascript-action`) — fetched and cached from GitHub, including its deprecated stdout-based output convention |
+| [`uses-docker-action.yml`](workflows/uses-docker-action.yml) | `uses:` with a repo-based Docker action ([`actions/docker-hello-action`](workflows/actions/docker-hello-action/)) — builds its Dockerfile (cached by tag after the first run), runs as a separate sibling container |
+| [`uses-docker-image.yml`](workflows/uses-docker-image.yml) | `uses:` with a raw `docker://image:tag` reference — no `action.yml`, `entrypoint`/`args` from `with:`, proves the job workspace bind mount and network join both work |
 
 ## What's not shown here (yet)
 
 These examples deliberately stick to what's actually implemented today.
-Docker and composite actions (`runs.using: docker`/`composite`), artifacts,
-caching, matrix `include`/`exclude`, and Windows/macOS runners aren't
-supported yet — see [the roadmap](../docs/design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
+Composite actions (`runs.using: composite`), artifacts, caching, matrix
+`include`/`exclude`, and Windows/macOS runners aren't supported yet — see
+[the roadmap](../docs/design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
 for what's coming and in what order. Workflow files using those features
 will fail with a clear "not supported yet" error rather than silently
 doing the wrong thing.

@@ -1,0 +1,20 @@
+# Demonstrates uses: with a raw docker://image:tag reference — no
+# action.yml at all, entrypoint/args come from this step's own with:
+# block. Proves the job workspace bind mount and network namespace join
+# both work for a Docker action exactly like they do for run: steps.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-docker-image.yml
+name: uses raw docker image
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: write a marker file
+        run: 'echo "written by a run: step" > marker.txt'
+      - name: read it back from a raw docker:// step
+        uses: docker://alpine:3.19
+        with:
+          entrypoint: 'cat'
+          args: '/github/workspace/marker.txt'

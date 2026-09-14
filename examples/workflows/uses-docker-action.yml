@@ -1,0 +1,20 @@
+# Demonstrates uses: with a repo-based Docker action (runs.using: docker,
+# runs.image: Dockerfile) — builds the action's own Dockerfile (cached by
+# tag after the first run), runs it as a separate sibling container, and
+# reads its output back via steps.<id>.outputs.<name>.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-docker-action.yml
+name: uses docker action
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: ./examples/workflows/actions/docker-hello-action
+        with:
+          who-to-greet: 'mirror-gha'
+      - name: use the output
+        run: 'echo "Got greeting: ${{ steps.greet.outputs.greeting }}"'
