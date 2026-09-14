@@ -22,12 +22,14 @@ feature. Build the binary first (`make build` from the repo root), then:
 | [`uses-marketplace-action.yml`](workflows/uses-marketplace-action.yml) | `uses:` with a real, unmodified Marketplace action (`actions/hello-world-javascript-action`) — fetched and cached from GitHub, including its deprecated stdout-based output convention |
 | [`uses-docker-action.yml`](workflows/uses-docker-action.yml) | `uses:` with a repo-based Docker action ([`actions/docker-hello-action`](workflows/actions/docker-hello-action/)) — builds its Dockerfile (cached by tag after the first run), runs as a separate sibling container |
 | [`uses-docker-image.yml`](workflows/uses-docker-image.yml) | `uses:` with a raw `docker://image:tag` reference — no `action.yml`, `entrypoint`/`args` from `with:`, proves the job workspace bind mount and network join both work |
+| [`uses-composite-action.yml`](workflows/uses-composite-action.yml) | `uses:` with a composite action ([`actions/greet-composite-action`](workflows/actions/greet-composite-action/)) — nested `run:`/`uses:` steps (including a nested JS action), `inputs.*`, and its own `outputs:` bridging a nested step's output back up |
+| [`uses-local-repository.yml`](workflows/uses-local-repository.yml) | `--local-repository owner/repo@ref=local/path` — overrides a Marketplace-style reference to resolve from a local directory instead of fetching over the network |
 
 ## What's not shown here (yet)
 
 These examples deliberately stick to what's actually implemented today.
-Composite actions (`runs.using: composite`), artifacts, caching, matrix
-`include`/`exclude`, and Windows/macOS runners aren't supported yet — see
+Artifacts, caching, matrix `include`/`exclude`, and Windows/macOS runners
+aren't supported yet — see
 [the roadmap](../docs/design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
 for what's coming and in what order. Workflow files using those features
 will fail with a clear "not supported yet" error rather than silently

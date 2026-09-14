@@ -95,6 +95,25 @@ Unreleased until the first `v0.1.0`.
   real against a raw `docker://alpine` step and a hand-written
   Dockerfile-based local action fixture, including confirming the image
   build is genuinely cached (not rebuilt) on a second run.
+- **`uses:` composite actions.** A composite action's own `runs.steps:`
+  execute through the same `runStep` logic every other step uses —
+  recursively, so a composite can nest another composite (capped at 10
+  levels deep, a mirror-gha-specific safety net act itself doesn't need,
+  since its network-fetch model makes a self-referencing action rare;
+  mirror-gha's local-path resolution makes it a real, easy-to-hit crash
+  risk instead). Its own inputs are available to its nested steps via a
+  new `inputs.*` expression context — derived from `INPUT_*` env vars
+  generically, not new storage, matching act's own model. Its own
+  `outputs:` (`value: ${{ steps.x.outputs.y }}` expressions) evaluate
+  against the composite's own nested step scope and surface as the
+  calling `uses:` step's output. Verified for real against a fixture
+  nesting a `run:` step and a `uses:` step calling the existing local JS
+  action fixture, confirming the full input → nested-step → output chain.
+- **`--local-repository owner/repo[@ref]=local/path`** (repeatable),
+  matching act's own flag — overrides a Marketplace-style action
+  reference to resolve from a local directory, checked before the
+  network fetch. Verified for real: a reference to a repo that cannot
+  exist on GitHub resolves correctly with the flag and fails without it.
 
 ### Fixed
 
@@ -117,11 +136,19 @@ Unreleased until the first `v0.1.0`.
 - **Temp directory leak.** Every job run left its host-side workflow-command
   files directory behind in the OS temp dir forever, since `Stop()` only
   removed the container. Now cleaned up alongside the container.
+- **Composite action nested step output silently swallowed.** Found via
+  real end-to-end testing of the first composite action example: a
+  composite step's own `StepReport` carried no stdout/stderr at all, so
+  `mirror run` printed nothing for any nested `run:`/`uses:` step inside
+  it — the composite's own bridged `outputs:` still computed correctly,
+  but its nested steps' console output vanished. Fixed by concatenating
+  every nested step's stdout/stderr into the composite's own outer
+  `StepReport`.
 
 ### Known limitations
 
-See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) — composite
-`uses:` actions, artifacts/caching, `matrix.include`/`exclude`,
-`services:`/`container:` job fields, and Windows/macOS runners are not
-implemented yet, by design and in that order (see the
+See [`docs/usage.md`](docs/usage.md#whats-not-supported-yet) —
+artifacts/caching, `matrix.include`/`exclude`, `services:`/`container:`
+job fields, and Windows/macOS runners are not implemented yet, by design
+and in that order (see the
 [design spec](docs/design/specs/2026-09-14-mirror-gha-design.md)).

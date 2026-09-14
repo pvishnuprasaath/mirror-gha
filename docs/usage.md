@@ -104,8 +104,7 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   vars exactly as GitHub Actions does (dashes preserved in input names —
   which is exactly why `uses:` steps exec Node directly with no
   intermediate shell: a shell silently drops env vars with dashed names
-  before it execs children). Composite actions (`runs.using: composite`)
-  are rejected with a clear error, not approximated.
+  before it execs children).
 - **`uses:` Docker actions** — a raw `docker://image:tag` reference, or a
   Marketplace/local action whose `runs.image` names a Dockerfile (built
   and cached by tag, rebuilt only if the tag doesn't already exist). Runs
@@ -117,8 +116,23 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   everywhere else. `/var/run/docker.sock` is mounted into every Docker
   action container unconditionally, matching real GitHub-hosted runners —
   this gives any Docker action, including an unmodified Marketplace one,
-  full host Docker daemon control the moment it runs. Composite actions
-  (`runs.using: composite`) are still rejected with a clear error.
+  full host Docker daemon control the moment it runs.
+- **`uses:` composite actions** — a composite action's own `runs.steps:`
+  execute through the exact same step-execution logic every other step
+  uses (recursively — a composite can nest another composite, capped at
+  10 levels deep as a safety net against a self-referencing local action,
+  not a real-world limitation). Its own declared inputs are available to
+  its nested steps via the `inputs.*` expression context; its own
+  `outputs:` (each a `${{ steps.x.outputs.y }}`-style expression,
+  evaluated against the composite's own nested step scope) bridge back up
+  as the calling `uses:` step's own output. Nested steps never inherit
+  the calling workflow/job's `defaults.run.shell`/`working-directory` —
+  matches real GitHub Actions' own behavior here. No `runs.using` value a
+  real action might declare is rejected as unsupported anymore.
+- **`--local-repository owner/repo[@ref]=local/path`** (repeatable) —
+  overrides where a Marketplace-style action reference resolves from,
+  for testing an in-progress local edit before publishing/tagging it.
+  Checked before the network fetch; a hit skips fetching entirely.
 - **Multi-job workflows with `needs:`** — jobs run in dependency order; a
   job whose `needs:` didn't all succeed is reported `skipped`, not run. A
   job's declared `outputs:` are available to dependents via
@@ -151,9 +165,6 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- Composite actions (`runs.using: composite`) — JS and Docker actions
-  (Marketplace, local, and raw `docker://` references) all work; composite
-  step-graph expansion doesn't yet
 - Artifacts (`actions/upload-artifact` / `download-artifact`) and caching
   (`actions/cache`)
 - `matrix.include` / `matrix.exclude`

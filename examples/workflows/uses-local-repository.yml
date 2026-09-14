@@ -1,0 +1,21 @@
+# Demonstrates a Marketplace-style reference (owner/repo@ref) resolved
+# from a local directory instead of fetched over the network, via
+# --local-repository. This workflow deliberately references a repo/ref
+# that doesn't exist on GitHub (mirror-gha/does-not-exist@v1) — the point
+# is proving the override is used INSTEAD of a real fetch, not alongside one.
+#
+# Try it (from the repo root):
+#   mirror run --local-repository mirror-gha/does-not-exist@v1=examples/workflows/actions/hello-action examples/workflows/uses-local-repository.yml
+name: uses local-repository override
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: mirror-gha/does-not-exist@v1
+        with:
+          who-to-greet: 'override-works'
+      - name: use the output
+        run: 'echo "Got greeting: ${{ steps.greet.outputs.greeting }}"'

@@ -355,6 +355,8 @@ restriction needed beyond what already exists.
 
 ## Composite Actions Runtime
 
+**Implemented.**
+
 **Scope:** `uses:` resolving to a composite action (`runs.using: composite`)
 — its own `action.yml` carries a `runs.steps:` list of nested `run:`/
 `uses:` steps (which may themselves be JS, Docker, or another composite
@@ -464,6 +466,8 @@ shares the one pinned Node copy-in per job, not one per composite
 invocation, consistent with how top-level JS steps already behave.
 
 ## `--local-repository`
+
+**Implemented.**
 
 **Scope:** override local action resolution for testing an in-progress
 action before merging/tagging it — the same problem act's own

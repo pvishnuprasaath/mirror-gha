@@ -1,0 +1,21 @@
+# Demonstrates uses: with a composite action (runs.using: composite) —
+# its own nested run:/uses: steps execute for real (including a nested
+# JS action), inputs.* resolves the composite's own declared inputs, and
+# its outputs: block bridges the nested JS action's own output back up to
+# this step's steps.<id>.outputs.
+#
+# Try it (from the repo root):
+#   mirror run examples/workflows/uses-composite-action.yml
+name: uses composite action
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: greet
+        id: greet
+        uses: ./examples/workflows/actions/greet-composite-action
+        with:
+          who-to-greet: 'mirror-gha'
+      - name: use the output
+        run: 'echo "Got greeting: ${{ steps.greet.outputs.greeting }}"'
