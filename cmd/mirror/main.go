@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"mirror-gha/internal/cacheserver"
 	"mirror-gha/internal/engine"
 	"mirror-gha/internal/runner"
 )
@@ -217,7 +218,30 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars)
+	extraEnv := map[string]string{}
+	if !mode.dryRun {
+		storeRoot, err := cacheserver.StoreRoot()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "resolve cache store root: %v\n", err)
+			return 1
+		}
+		store, err := cacheserver.OpenStore(storeRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open cache store: %v\n", err)
+			return 1
+		}
+		cacheSrv, err := cacheserver.Start(store)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "start cache server: %v\n", err)
+			return 1
+		}
+		defer cacheSrv.Stop(context.Background())
+
+		extraEnv["ACTIONS_CACHE_URL"] = fmt.Sprintf("http://host.docker.internal:%d/", cacheSrv.Port())
+		extraEnv["ACTIONS_RUNTIME_TOKEN"] = "mirror-gha-local-token"
+	}
+
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars, extraEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

@@ -32,7 +32,7 @@ type BackendSelector func(runsOn string) (runner.Backend, error)
 // workspaceDir is bind-mounted into every job as its workspace (see
 // runner.Backend.StartJob) — typically the directory `mirror run` was
 // invoked from, or an explicit override.
-func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelector, workspaceDir string, localRepositoryOverrides map[string]string, vars map[string]string) (*WorkflowResult, error) {
+func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelector, workspaceDir string, localRepositoryOverrides map[string]string, vars map[string]string, extraEnv map[string]string) (*WorkflowResult, error) {
 	if workspaceDir == "" {
 		return nil, fmt.Errorf("workspaceDir must not be empty")
 	}
@@ -102,6 +102,7 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 				WorkspaceDir:             workspaceDir,
 				LocalRepositoryOverrides: localRepositoryOverrides,
 				Vars:                     vars,
+				ExtraEnv:                 extraEnv,
 			})
 			if cancel != nil {
 				cancel()

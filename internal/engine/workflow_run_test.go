@@ -86,7 +86,7 @@ func TestRunWorkflow_RunsInDependencyOrder(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunWorkflow_SkipsJobWhenNeedFails(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRunWorkflow_PropagatesJobOutputsToNeeds(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -197,7 +197,7 @@ func TestRunWorkflow_VarsReachExpressionContext(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, map[string]string{"ENVIRONMENT": "staging"})
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, map[string]string{"ENVIRONMENT": "staging"}, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -214,7 +214,7 @@ func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
 		},
 	}
 
-	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil, nil)
+	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil, nil, nil)
 	if err == nil {
 		t.Fatal("RunWorkflow() with empty workspaceDir error = nil, want error")
 	}

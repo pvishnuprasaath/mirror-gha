@@ -422,3 +422,25 @@ func TestRunJob_DockerActionStepCallsRunDockerAction(t *testing.T) {
 		t.Errorf("execSpecs = %d entries, want 0 (a Docker action step must never call Exec)", len(backend.lastJob.execSpecs))
 	}
 }
+
+func TestRunJob_ExtraEnvReachesStepExec(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo $SOME_EXTRA_VAR"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{
+		WorkspaceDir: t.TempDir(),
+		ExtraEnv:     map[string]string{"SOME_EXTRA_VAR": "extra-value"},
+	})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	spec := backend.lastJob.execSpecs[0]
+	if spec.Env["SOME_EXTRA_VAR"] != "extra-value" {
+		t.Errorf(`Env["SOME_EXTRA_VAR"] = %q, want %q`, spec.Env["SOME_EXTRA_VAR"], "extra-value")
+	}
+}

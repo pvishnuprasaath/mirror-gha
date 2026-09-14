@@ -37,6 +37,7 @@ type JobRunOptions struct {
 	Vars                     map[string]string
 	WorkspaceDir             string // host directory bind-mounted as the job's workspace
 	LocalRepositoryOverrides map[string]string
+	ExtraEnv                 map[string]string
 }
 
 // runStepParams bundles what varies between a job's own top-level steps
@@ -76,6 +77,9 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	actx.Needs = opts.Needs
 	actx.Matrix = opts.Matrix
 	actx.Vars = opts.Vars
+	for k, v := range opts.ExtraEnv {
+		actx.Env[k] = v
+	}
 	result := &JobResult{Conclusion: "success"}
 
 	runnerJob, err := backend.StartJob(ctx, opts.WorkspaceDir)
