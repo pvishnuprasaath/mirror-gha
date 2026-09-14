@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // linuxRunnerImage is the base image jobs run in for v1. It's a plain
@@ -60,6 +62,45 @@ func dockerRegistryLogout(ctx context.Context, registry string) error {
 	return nil
 }
 
+// waitForServiceHealth polls containerID's Docker healthcheck status.
+// A container with no HEALTHCHECK defined reports an empty Health.Status
+// (docker inspect's format returns "<no value>" for a nonexistent field
+// path) — treated as ready immediately, matching act's own behavior of
+// not blocking forever on a service that never declared a healthcheck.
+func waitForServiceHealth(ctx context.Context, containerID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Health.Status}}", containerID)
+		out, err := cmd.CombinedOutput()
+		status := strings.TrimSpace(string(out))
+		if err != nil || status == "<no value>" || status == "" {
+			return nil
+		}
+		if status == "healthy" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("service container %s did not become healthy within %s (last status: %s)", containerID, timeout, status)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// sanitizeDockerName makes s safe to use as a Docker network/container
+// name — lowercase, with anything other than [a-z0-9-] replaced by "-".
+func sanitizeDockerName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
 // containerFilesMount is where a job's FilesRoot is bind-mounted inside
 // the container.
 const containerFilesMount = "/mirror-files"
@@ -109,9 +150,78 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context, jobID string, hostWor
 		}
 	}
 
+	var networkName string
+	var serviceContainerIDs []string
+	if len(services) > 0 {
+		networkName = sanitizeDockerName("mirror-svc-" + jobID)
+		createNet := exec.CommandContext(ctx, "docker", "network", "create", networkName)
+		var netStderr bytes.Buffer
+		createNet.Stderr = &netStderr
+		if err := createNet.Run(); err != nil && !strings.Contains(netStderr.String(), "already exists") {
+			os.RemoveAll(hostFilesRoot)
+			return nil, fmt.Errorf("create network %s: %w: %s", networkName, err, netStderr.String())
+		}
+
+		names := make([]string, 0, len(services))
+		for name := range services {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			spec := services[name]
+			if spec.Username != "" {
+				registry := registryHostFor(spec.Image)
+				if err := dockerRegistryLogin(ctx, registry, spec.Username, spec.Password); err != nil {
+					return nil, err
+				}
+				registryLogouts = append(registryLogouts, registry)
+			}
+
+			svcArgs := []string{"run", "-d", "--rm",
+				"--network", networkName,
+				"--network-alias", name,
+			}
+			for k, v := range spec.Env {
+				svcArgs = append(svcArgs, "-e", fmt.Sprintf("%s=%s", k, v))
+			}
+			for _, p := range spec.Ports {
+				svcArgs = append(svcArgs, "-p", p)
+			}
+			for _, v := range spec.Volumes {
+				svcArgs = append(svcArgs, "-v", v)
+			}
+			if spec.Options != "" {
+				opts, err := splitDockerOptions(spec.Options)
+				if err != nil {
+					return nil, err
+				}
+				svcArgs = append(svcArgs, opts...)
+			}
+			svcArgs = append(svcArgs, spec.Image)
+
+			svcCmd := exec.CommandContext(ctx, "docker", svcArgs...)
+			var svcStdout, svcStderr bytes.Buffer
+			svcCmd.Stdout = &svcStdout
+			svcCmd.Stderr = &svcStderr
+			if err := svcCmd.Run(); err != nil {
+				return nil, fmt.Errorf("start service %s: %w: %s", name, err, svcStderr.String())
+			}
+			serviceID := strings.TrimSpace(svcStdout.String())
+			serviceContainerIDs = append(serviceContainerIDs, serviceID)
+
+			if err := waitForServiceHealth(ctx, serviceID, 5*time.Minute); err != nil {
+				return nil, fmt.Errorf("service %s: %w", name, err)
+			}
+		}
+	}
+
 	args := []string{"run", "-d", "--rm",
 		"-v", hostFilesRoot + ":" + containerFilesMount,
 		"-v", hostWorkspaceDir + ":" + containerWorkspaceMount,
+	}
+	if networkName != "" {
+		args = append(args, "--network", networkName)
 	}
 	if containerSpec != nil {
 		for k, v := range containerSpec.Env {
@@ -144,19 +254,23 @@ func (b *LinuxDockerBackend) StartJob(ctx context.Context, jobID string, hostWor
 	}
 
 	return &dockerJob{
-		containerID:      strings.TrimSpace(stdout.String()),
-		hostFilesRoot:    hostFilesRoot,
-		hostWorkspaceDir: hostWorkspaceDir,
-		registryLogouts:  registryLogouts,
+		containerID:         strings.TrimSpace(stdout.String()),
+		hostFilesRoot:       hostFilesRoot,
+		hostWorkspaceDir:    hostWorkspaceDir,
+		registryLogouts:     registryLogouts,
+		networkName:         networkName,
+		serviceContainerIDs: serviceContainerIDs,
 	}, nil
 }
 
 // dockerJob is one running container backing a single job.
 type dockerJob struct {
-	containerID      string
-	hostFilesRoot    string
-	hostWorkspaceDir string
-	registryLogouts  []string
+	containerID         string
+	hostFilesRoot       string
+	hostWorkspaceDir    string
+	registryLogouts     []string
+	networkName         string
+	serviceContainerIDs []string
 }
 
 func (j *dockerJob) FilesRoot() string {
@@ -315,6 +429,14 @@ func (j *dockerJob) Stop(ctx context.Context) error {
 	stopErr := cmd.Run()
 	if stopErr != nil {
 		stopErr = fmt.Errorf("stop job container %s: %w: %s", j.containerID, stopErr, stderr.String())
+	}
+
+	for _, serviceID := range j.serviceContainerIDs {
+		exec.CommandContext(ctx, "docker", "rm", "-f", serviceID).Run() // best-effort
+	}
+
+	if j.networkName != "" {
+		exec.CommandContext(ctx, "docker", "network", "rm", j.networkName).Run() // best-effort
 	}
 
 	for _, registry := range j.registryLogouts {

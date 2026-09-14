@@ -392,3 +392,69 @@ func TestRegistryHostFor_RunnerPackage(t *testing.T) {
 		}
 	}
 }
+
+func TestLinuxDockerBackend_StartJob_ServiceReachableByAlias(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), "svc-test-job", t.TempDir(), nil, map[string]ContainerSpec{
+		"echoserver": {Image: "nginx:1.27-alpine"},
+	})
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	defer job.Stop(context.Background())
+
+	// alpine has no long-running server, but DNS resolution alone proves
+	// the network-alias wiring works — getent hosts resolves via the
+	// container's own /etc/resolv.conf + Docker's embedded DNS.
+	result, err := job.Exec(context.Background(), StepSpec{
+		Command:  "getent hosts echoserver",
+		Shell:    "sh",
+		Env:      map[string]string{},
+		FilesDir: mkStepDir(t, job.FilesRoot()),
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("getent hosts echoserver exit = %d, want 0 (service should resolve by name); stderr: %s", result.ExitCode, result.Stderr)
+	}
+
+	dj := job.(*dockerJob)
+	if dj.networkName == "" {
+		t.Error("networkName is empty, want a created per-job network")
+	}
+	if len(dj.serviceContainerIDs) != 1 {
+		t.Errorf("serviceContainerIDs = %v, want exactly 1", dj.serviceContainerIDs)
+	}
+}
+
+func TestLinuxDockerBackend_StartJob_ServiceTeardownCleansUpNetwork(t *testing.T) {
+	requireDocker(t)
+
+	backend := NewLinuxDockerBackend()
+	job, err := backend.StartJob(context.Background(), "svc-teardown-job", t.TempDir(), nil, map[string]ContainerSpec{
+		"echoserver": {Image: "nginx:1.27-alpine"},
+	})
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	dj := job.(*dockerJob)
+	networkName := dj.networkName
+	serviceID := dj.serviceContainerIDs[0]
+
+	if err := job.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	inspectNet := exec.CommandContext(context.Background(), "docker", "network", "inspect", networkName)
+	if err := inspectNet.Run(); err == nil {
+		t.Errorf("network %s still exists after Stop()", networkName)
+	}
+
+	inspectSvc := exec.CommandContext(context.Background(), "docker", "inspect", serviceID)
+	if err := inspectSvc.Run(); err == nil {
+		t.Errorf("service container %s still exists after Stop()", serviceID)
+	}
+}
