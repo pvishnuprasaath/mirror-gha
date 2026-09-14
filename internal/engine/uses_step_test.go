@@ -21,6 +21,16 @@ func requireNetwork(t *testing.T) {
 	}
 }
 
+// requireDocker skips the test if the docker CLI isn't installed — mirrors
+// internal/runner's and internal/actions' own requireDocker(t) (duplicated
+// per package, same as requireNetwork already is).
+func requireDocker(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not installed, skipping Docker action test")
+	}
+}
+
 func TestPrepareUsesStep_LocalAction(t *testing.T) {
 	requireNetwork(t)
 
@@ -47,27 +57,87 @@ runs:
 	actx := NewContext(&Workflow{}, &Job{})
 	nodeReady := false
 
-	args, env, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
+	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
 	if err != nil {
 		t.Fatalf("prepareUsesStep() error = %v", err)
 	}
 
 	wantArgs := []string{"/mirror-node/bin/node", "/mirror-actions/greet/index.js"}
-	if len(args) != len(wantArgs) || args[0] != wantArgs[0] || args[1] != wantArgs[1] {
-		t.Errorf("args = %v, want %v", args, wantArgs)
+	if len(plan.Args) != len(wantArgs) || plan.Args[0] != wantArgs[0] || plan.Args[1] != wantArgs[1] {
+		t.Errorf("Args = %v, want %v", plan.Args, wantArgs)
 	}
-	if env["INPUT_GREETING"] != "hi" {
-		t.Errorf(`env["INPUT_GREETING"] = %q, want %q`, env["INPUT_GREETING"], "hi")
+	if plan.Env["INPUT_GREETING"] != "hi" {
+		t.Errorf(`Env["INPUT_GREETING"] = %q, want %q`, plan.Env["INPUT_GREETING"], "hi")
 	}
-	if env["GITHUB_ACTION_PATH"] != "/mirror-actions/greet" {
-		t.Errorf(`env["GITHUB_ACTION_PATH"] = %q, want %q`, env["GITHUB_ACTION_PATH"], "/mirror-actions/greet")
+	if plan.Env["GITHUB_ACTION_PATH"] != "/mirror-actions/greet" {
+		t.Errorf(`Env["GITHUB_ACTION_PATH"] = %q, want %q`, plan.Env["GITHUB_ACTION_PATH"], "/mirror-actions/greet")
+	}
+	if plan.Docker != nil {
+		t.Error("Docker = non-nil, want nil for a node action")
 	}
 	if !nodeReady {
 		t.Error("nodeReady = false, want true after the first uses: step")
 	}
 }
 
-func TestPrepareUsesStep_RejectsNonNodeRuntime(t *testing.T) {
+func TestPrepareUsesStep_RejectsCompositeRuntime(t *testing.T) {
+	workspaceDir := t.TempDir()
+	actionDir := filepath.Join(workspaceDir, "composite-action")
+	if err := os.MkdirAll(actionDir, 0o755); err != nil {
+		t.Fatalf("mkdir action dir: %v", err)
+	}
+	actionYML := "name: 'Composite Action'\nruns:\n  using: 'composite'\n"
+	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
+	step := Step{Uses: "./composite-action"}
+	actx := NewContext(&Workflow{}, &Job{})
+	nodeReady := true
+
+	_, err := prepareUsesStep(context.Background(), job, workspaceDir, "one", step, actx, &nodeReady)
+	if err == nil {
+		t.Fatal("prepareUsesStep() error = nil, want error for runs.using: composite")
+	}
+}
+
+func TestPrepareUsesStep_RawDockerImage(t *testing.T) {
+	workspaceDir := t.TempDir()
+	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
+	step := Step{
+		Uses: "docker://alpine:3.19",
+		With: map[string]string{"entrypoint": "sh", "args": "-c echo-hi"},
+	}
+	actx := NewContext(&Workflow{}, &Job{})
+	nodeReady := false
+
+	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "raw", step, actx, &nodeReady)
+	if err != nil {
+		t.Fatalf("prepareUsesStep() error = %v", err)
+	}
+	if plan.Docker == nil {
+		t.Fatal("Docker = nil, want non-nil for a raw docker:// step")
+	}
+	if plan.Docker.Image != "alpine:3.19" {
+		t.Errorf("Docker.Image = %q, want %q", plan.Docker.Image, "alpine:3.19")
+	}
+	wantEntrypoint := []string{"sh"}
+	if len(plan.Docker.Entrypoint) != 1 || plan.Docker.Entrypoint[0] != wantEntrypoint[0] {
+		t.Errorf("Docker.Entrypoint = %v, want %v", plan.Docker.Entrypoint, wantEntrypoint)
+	}
+	wantArgs := []string{"-c", "echo-hi"}
+	if len(plan.Docker.Args) != len(wantArgs) || plan.Docker.Args[0] != wantArgs[0] || plan.Docker.Args[1] != wantArgs[1] {
+		t.Errorf("Docker.Args = %v, want %v", plan.Docker.Args, wantArgs)
+	}
+	if plan.Docker.ActionSourceDir != "" {
+		t.Errorf("Docker.ActionSourceDir = %q, want empty (no action.yml for a raw docker:// step)", plan.Docker.ActionSourceDir)
+	}
+}
+
+func TestPrepareUsesStep_RepoBasedDockerAction(t *testing.T) {
+	requireDocker(t)
+
 	workspaceDir := t.TempDir()
 	actionDir := filepath.Join(workspaceDir, "docker-action")
 	if err := os.MkdirAll(actionDir, 0o755); err != nil {
@@ -75,21 +145,47 @@ func TestPrepareUsesStep_RejectsNonNodeRuntime(t *testing.T) {
 	}
 	actionYML := `
 name: 'Docker Action'
+inputs:
+  who-to-greet:
+    default: 'World'
 runs:
   using: 'docker'
-  image: 'Dockerfile'
+  image: 'docker://alpine:3.19'
+  env:
+    STATIC_VAR: 'set-by-action-yml'
 `
 	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
 		t.Fatalf("write action.yml: %v", err)
 	}
 
 	job := &fakeJob{dir: t.TempDir(), workspaceDir: workspaceDir}
-	step := Step{Uses: "./docker-action"}
+	step := Step{Uses: "./docker-action", With: map[string]string{"who-to-greet": "mirror-gha"}}
 	actx := NewContext(&Workflow{}, &Job{})
-	nodeReady := true // already true, so we know the rejection isn't a Node-setup failure
+	nodeReady := false
 
-	_, _, err := prepareUsesStep(context.Background(), job, workspaceDir, "one", step, actx, &nodeReady)
-	if err == nil {
-		t.Fatal("prepareUsesStep() error = nil, want error for runs.using: docker")
+	plan, err := prepareUsesStep(context.Background(), job, workspaceDir, "greet", step, actx, &nodeReady)
+	if err != nil {
+		t.Fatalf("prepareUsesStep() error = %v", err)
+	}
+	if plan.Docker == nil {
+		t.Fatal("Docker = nil, want non-nil for a docker-using action")
+	}
+	if plan.Docker.Image != "alpine:3.19" {
+		t.Errorf("Docker.Image = %q, want %q", plan.Docker.Image, "alpine:3.19")
+	}
+	if plan.Docker.ActionSourceDir != actionDir {
+		t.Errorf("Docker.ActionSourceDir = %q, want %q", plan.Docker.ActionSourceDir, actionDir)
+	}
+	if plan.Docker.ActionPathInContainer != "/mirror-actions/greet" {
+		t.Errorf("Docker.ActionPathInContainer = %q, want %q", plan.Docker.ActionPathInContainer, "/mirror-actions/greet")
+	}
+	if plan.Env["INPUT_WHO-TO-GREET"] != "mirror-gha" {
+		t.Errorf(`Env["INPUT_WHO-TO-GREET"] = %q, want %q`, plan.Env["INPUT_WHO-TO-GREET"], "mirror-gha")
+	}
+	if plan.Env["STATIC_VAR"] != "set-by-action-yml" {
+		t.Errorf(`Env["STATIC_VAR"] = %q, want %q`, plan.Env["STATIC_VAR"], "set-by-action-yml")
+	}
+	if nodeReady {
+		t.Error("nodeReady = true, want false — a Docker action must never trigger Node setup")
 	}
 }

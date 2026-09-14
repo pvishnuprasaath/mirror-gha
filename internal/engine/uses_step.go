@@ -10,35 +10,56 @@ import (
 	"mirror-gha/internal/runner"
 )
 
-// prepareUsesStep resolves and stages a uses: step's action inside the
-// running job — copying the pinned Node runtime in once per job, and this
-// step's action source in fresh every time — and returns the exec argv
-// (see StepSpec.Args: this deliberately bypasses the shell entirely — a
-// POSIX shell silently drops inherited environment variables with dashed
-// names, confirmed for real against dash/bin-sh in Ubuntu images, and
-// GitHub Actions' INPUT_* convention allows dashes in input names) plus
-// the extra env vars (INPUT_*, GITHUB_ACTION_PATH) to merge into the
-// step's environment. actx is used only for expression substitution
-// inside with: values; the caller still owns the workflow-command file
-// protocol and output parsing, identical to run: steps.
-func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID string, step Step, actx *Context, nodeReady *bool) ([]string, map[string]string, error) {
+// usesStepPlan is what prepareUsesStep resolves a uses: step down to.
+// Exactly one execution shape applies per step: a node action returns
+// Args (exec'd directly into the job container, see runner.StepSpec's own
+// doc comment for why no shell), a Docker action returns Docker (run as
+// its own sibling container instead — see DockerActionSpec's doc comment
+// for why it can't just be an Exec). Env carries INPUT_*/GITHUB_ACTION_PATH
+// (plus runs.env for Docker actions) either way, merged into the step's
+// env by the caller exactly like today.
+type usesStepPlan struct {
+	Args   []string
+	Env    map[string]string
+	Docker *runner.DockerActionSpec
+}
+
+// prepareUsesStep resolves and stages a uses: step's action. actx is used
+// only for expression substitution inside with: values; the caller still
+// owns the workflow-command file protocol and output parsing, identical
+// to run: steps.
+func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID string, step Step, actx *Context, nodeReady *bool) (usesStepPlan, error) {
 	with := map[string]string{}
 	for k, v := range step.With {
 		val, err := SubstituteExpressions(v, actx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("substitute with.%s: %w", k, err)
+			return usesStepPlan{}, fmt.Errorf("substitute with.%s: %w", k, err)
 		}
 		with[k] = val
 	}
 
 	ref, err := actions.ResolveUsesRef(step.Uses)
 	if err != nil {
-		return nil, nil, err
+		return usesStepPlan{}, err
+	}
+
+	// A raw docker://image:tag reference has no action.yml, no repo, no
+	// source directory at all — the image itself is the action.
+	// entrypoint/args come only from this step's own with: block.
+	if ref.Docker {
+		spec := &runner.DockerActionSpec{Image: ref.DockerImage}
+		if v, ok := with["entrypoint"]; ok && v != "" {
+			spec.Entrypoint = strings.Fields(v)
+		}
+		if v, ok := with["args"]; ok {
+			spec.Args = strings.Fields(v)
+		}
+		return usesStepPlan{Docker: spec}, nil
 	}
 
 	cacheRoot, err := actions.CacheRoot()
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve cache root: %w", err)
+		return usesStepPlan{}, fmt.Errorf("resolve cache root: %w", err)
 	}
 
 	var hostSourceDir string
@@ -47,7 +68,7 @@ func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID s
 	} else {
 		actionDir, err := actions.FetchRemote(ref.Owner, ref.Repo, ref.Ref, cacheRoot)
 		if err != nil {
-			return nil, nil, fmt.Errorf("fetch action %s: %w", step.Uses, err)
+			return usesStepPlan{}, fmt.Errorf("fetch action %s: %w", step.Uses, err)
 		}
 		hostSourceDir = actionDir
 		if ref.Subpath != "" {
@@ -57,32 +78,73 @@ func prepareUsesStep(ctx context.Context, job runner.Job, workspaceDir, stepID s
 
 	metadata, err := actions.ParseMetadata(hostSourceDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse action metadata for %s: %w", step.Uses, err)
-	}
-
-	if !strings.HasPrefix(metadata.Runs.Using, "node") {
-		return nil, nil, fmt.Errorf("action %s has runs.using=%q, which isn't supported yet (only JS/node actions run today)", step.Uses, metadata.Runs.Using)
-	}
-
-	if !*nodeReady {
-		nodeDir, err := actions.EnsureNode(cacheRoot)
-		if err != nil {
-			return nil, nil, fmt.Errorf("ensure node runtime: %w", err)
-		}
-		if err := job.CopyToContainer(ctx, nodeDir, actions.ContainerNodePath); err != nil {
-			return nil, nil, fmt.Errorf("copy node runtime into job: %w", err)
-		}
-		*nodeReady = true
+		return usesStepPlan{}, fmt.Errorf("parse action metadata for %s: %w", step.Uses, err)
 	}
 
 	containerActionPath := actions.ContainerActionPath(stepID)
-	if err := job.CopyToContainer(ctx, hostSourceDir, containerActionPath); err != nil {
-		return nil, nil, fmt.Errorf("copy action %s into job: %w", step.Uses, err)
+
+	switch {
+	case strings.HasPrefix(metadata.Runs.Using, "node"):
+		if !*nodeReady {
+			nodeDir, err := actions.EnsureNode(cacheRoot)
+			if err != nil {
+				return usesStepPlan{}, fmt.Errorf("ensure node runtime: %w", err)
+			}
+			if err := job.CopyToContainer(ctx, nodeDir, actions.ContainerNodePath); err != nil {
+				return usesStepPlan{}, fmt.Errorf("copy node runtime into job: %w", err)
+			}
+			*nodeReady = true
+		}
+		if err := job.CopyToContainer(ctx, hostSourceDir, containerActionPath); err != nil {
+			return usesStepPlan{}, fmt.Errorf("copy action %s into job: %w", step.Uses, err)
+		}
+		env := actions.InputEnv(metadata, with)
+		env["GITHUB_ACTION_PATH"] = containerActionPath
+		args := []string{actions.ContainerNodePath + "/bin/node", containerActionPath + "/" + metadata.Runs.Main}
+		return usesStepPlan{Args: args, Env: env}, nil
+
+	case metadata.Runs.Using == "docker":
+		image, err := actions.ResolveDockerImage(ctx, hostSourceDir, step.Uses, metadata.Runs)
+		if err != nil {
+			return usesStepPlan{}, fmt.Errorf("resolve docker image for %s: %w", step.Uses, err)
+		}
+
+		// with.args/with.entrypoint override runs.args/runs.entrypoint
+		// wholesale, not merged. runs.args itself is never
+		// expression-substituted here: GitHub's own ${{ inputs.x }}
+		// substitution for runs.args references the action's own local
+		// inputs context, which mirror-gha's expression evaluator doesn't
+		// model (only env/github/runner/steps/needs/matrix/vars) — no
+		// current caller needs it. with.args, already substituted above
+		// against the workflow's own contexts like every other with:
+		// value, is the supported way to parameterize a Docker action's
+		// arguments.
+		entrypoint := metadata.Runs.Entrypoint
+		if v, ok := with["entrypoint"]; ok {
+			entrypoint = v
+		}
+		args := metadata.Runs.Args
+		if v, ok := with["args"]; ok {
+			args = strings.Fields(v)
+		}
+
+		env := actions.InputEnv(metadata, with)
+		for k, v := range metadata.Runs.Env {
+			env[k] = v
+		}
+
+		spec := &runner.DockerActionSpec{
+			Image:                 image,
+			Args:                  args,
+			ActionSourceDir:       hostSourceDir,
+			ActionPathInContainer: containerActionPath,
+		}
+		if entrypoint != "" {
+			spec.Entrypoint = strings.Fields(entrypoint)
+		}
+		return usesStepPlan{Env: env, Docker: spec}, nil
+
+	default:
+		return usesStepPlan{}, fmt.Errorf("action %s has runs.using=%q, which isn't supported yet (only JS/node and Docker actions run today)", step.Uses, metadata.Runs.Using)
 	}
-
-	env := actions.InputEnv(metadata, with)
-	env["GITHUB_ACTION_PATH"] = containerActionPath
-
-	args := []string{actions.ContainerNodePath + "/bin/node", containerActionPath + "/" + metadata.Runs.Main}
-	return args, env, nil
 }

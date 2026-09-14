@@ -93,10 +93,9 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		}
 
 		var command string
-		var args []string
-		var usesEnv map[string]string
+		var plan usesStepPlan
 		if step.Uses != "" {
-			args, usesEnv, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
+			plan, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
 			if err != nil {
 				return nil, fmt.Errorf("prepare uses: step %s: %w", id, err)
 			}
@@ -124,7 +123,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			env[k] = v
 		}
 		env["GITHUB_WORKSPACE"] = runnerJob.WorkspacePath()
-		for k, v := range usesEnv {
+		for k, v := range plan.Env {
 			env[k] = v
 		}
 
@@ -144,14 +143,21 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMinutes*float64(time.Minute)))
 		}
 
-		stepResult, err := runnerJob.Exec(stepCtx, runner.StepSpec{
-			Command:          command,
-			Args:             args,
-			Shell:            effectiveShell(step, job, wf),
-			Env:              env,
-			WorkingDirectory: workingDirectory,
-			FilesDir:         filesDir,
-		})
+		var stepResult runner.StepResult
+		if plan.Docker != nil {
+			plan.Docker.Env = env
+			plan.Docker.FilesDir = filesDir
+			stepResult, err = runnerJob.RunDockerAction(stepCtx, *plan.Docker)
+		} else {
+			stepResult, err = runnerJob.Exec(stepCtx, runner.StepSpec{
+				Command:          command,
+				Args:             plan.Args,
+				Shell:            effectiveShell(step, job, wf),
+				Env:              env,
+				WorkingDirectory: workingDirectory,
+				FilesDir:         filesDir,
+			})
+		}
 		if cancel != nil {
 			cancel()
 		}

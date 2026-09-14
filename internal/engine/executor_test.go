@@ -30,6 +30,7 @@ type fakeJob struct {
 	dir          string
 	workspaceDir string
 	execSpecs    []runner.StepSpec
+	dockerSpecs  []runner.DockerActionSpec
 }
 
 func (j *fakeJob) FilesRoot() string     { return j.dir }
@@ -48,6 +49,13 @@ func (j *fakeJob) Stop(ctx context.Context) error {
 
 func (j *fakeJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
 	return nil
+}
+
+func (j *fakeJob) RunDockerAction(ctx context.Context, spec runner.DockerActionSpec) (runner.StepResult, error) {
+	j.dockerSpecs = append(j.dockerSpecs, spec)
+	r := j.results[j.calls]
+	j.calls++
+	return r, nil
 }
 
 func TestRunJob_AllStepsSucceed(t *testing.T) {
@@ -376,5 +384,41 @@ func TestRunJob_UsesStepIgnoresWorkingDirectoryDefaults(t *testing.T) {
 	spec := backend.lastJob.execSpecs[0]
 	if spec.WorkingDirectory != workspaceDir {
 		t.Errorf("WorkingDirectory = %q, want %q (uses: steps must ignore defaults.run.working-directory)", spec.WorkingDirectory, workspaceDir)
+	}
+}
+
+func TestRunJob_DockerActionStepCallsRunDockerAction(t *testing.T) {
+	workspaceDir := t.TempDir()
+	actionDir := filepath.Join(workspaceDir, "docker-action")
+	if err := os.MkdirAll(actionDir, 0o755); err != nil {
+		t.Fatalf("mkdir action dir: %v", err)
+	}
+	actionYML := "name: 'Docker Action'\nruns:\n  using: 'docker'\n  image: 'docker://alpine:3.19'\n"
+	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Uses: "./docker-action"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: workspaceDir})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if result.Conclusion != "success" {
+		t.Errorf("Conclusion = %q, want success", result.Conclusion)
+	}
+	if len(backend.lastJob.dockerSpecs) != 1 {
+		t.Fatalf("dockerSpecs = %d entries, want 1", len(backend.lastJob.dockerSpecs))
+	}
+	if backend.lastJob.dockerSpecs[0].Image != "alpine:3.19" {
+		t.Errorf("dockerSpecs[0].Image = %q, want %q", backend.lastJob.dockerSpecs[0].Image, "alpine:3.19")
+	}
+	if len(backend.lastJob.execSpecs) != 0 {
+		t.Errorf("execSpecs = %d entries, want 0 (a Docker action step must never call Exec)", len(backend.lastJob.execSpecs))
 	}
 }

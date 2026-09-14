@@ -35,6 +35,9 @@ func (j *alwaysSucceedJob) CopyToContainer(ctx context.Context, hostPath, contai
 func (j *alwaysSucceedJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
 }
+func (j *alwaysSucceedJob) RunDockerAction(ctx context.Context, spec runner.DockerActionSpec) (runner.StepResult, error) {
+	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
+}
 func (j *alwaysSucceedJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
 
 // alwaysFailBackend fails every step it executes.
@@ -59,6 +62,9 @@ func (j *alwaysFailJob) CopyToContainer(ctx context.Context, hostPath, container
 	return nil
 }
 func (j *alwaysFailJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
+	return runner.StepResult{ExitCode: 1}, nil
+}
+func (j *alwaysFailJob) RunDockerAction(ctx context.Context, spec runner.DockerActionSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 1}, nil
 }
 func (j *alwaysFailJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
