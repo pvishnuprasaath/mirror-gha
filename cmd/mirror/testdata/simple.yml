@@ -1,0 +1,13 @@
+name: smoke test
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: say hello
+        run: echo hello-from-mirror
+      - name: write output
+        id: emit
+        run: echo "greeting=hi" >> "$GITHUB_OUTPUT"
+      - name: use output
+        run: echo "got ${{ steps.emit.outputs.greeting }}"
