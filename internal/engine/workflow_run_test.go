@@ -29,6 +29,9 @@ type alwaysSucceedJob struct {
 
 func (j *alwaysSucceedJob) FilesRoot() string     { return j.dir }
 func (j *alwaysSucceedJob) WorkspacePath() string { return j.workspaceDir }
+func (j *alwaysSucceedJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	return nil
+}
 func (j *alwaysSucceedJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
 }
@@ -52,6 +55,9 @@ type alwaysFailJob struct {
 
 func (j *alwaysFailJob) FilesRoot() string     { return j.dir }
 func (j *alwaysFailJob) WorkspacePath() string { return j.workspaceDir }
+func (j *alwaysFailJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	return nil
+}
 func (j *alwaysFailJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
 	return runner.StepResult{ExitCode: 1}, nil
 }

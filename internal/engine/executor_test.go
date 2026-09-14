@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"mirror-gha/internal/runner"
@@ -43,6 +44,10 @@ func (j *fakeJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepRe
 
 func (j *fakeJob) Stop(ctx context.Context) error {
 	return os.RemoveAll(j.dir)
+}
+
+func (j *fakeJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	return nil
 }
 
 func TestRunJob_AllStepsSucceed(t *testing.T) {
@@ -305,5 +310,37 @@ func TestRunJob_ExplicitWorkingDirectoryOverridesWorkspaceDefault(t *testing.T) 
 	spec := backend.lastJob.execSpecs[0]
 	if spec.WorkingDirectory != "/custom" {
 		t.Errorf("WorkingDirectory = %q, want %q (explicit setting should win over the workspace default)", spec.WorkingDirectory, "/custom")
+	}
+}
+
+func TestRunJob_UsesStepIgnoresWorkingDirectoryDefaults(t *testing.T) {
+	requireNetwork(t) // exercises the real prepareUsesStep -> actions.EnsureNode path
+
+	workspaceDir := t.TempDir()
+	actionDir := filepath.Join(workspaceDir, "my-action")
+	if err := os.MkdirAll(actionDir, 0o755); err != nil {
+		t.Fatalf("mkdir action dir: %v", err)
+	}
+	actionYML := "name: 'Test'\nruns:\n  using: 'node20'\n  main: 'index.js'\n"
+	if err := os.WriteFile(filepath.Join(actionDir, "action.yml"), []byte(actionYML), 0o644); err != nil {
+		t.Fatalf("write action.yml: %v", err)
+	}
+
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn:   "ubuntu-latest",
+		Defaults: &Defaults{Run: RunDefaults{WorkingDirectory: "/should-not-be-used"}},
+		Steps:    []Step{{ID: "one", Uses: "./my-action"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: workspaceDir})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+
+	spec := backend.lastJob.execSpecs[0]
+	if spec.WorkingDirectory != workspaceDir {
+		t.Errorf("WorkingDirectory = %q, want %q (uses: steps must ignore defaults.run.working-directory)", spec.WorkingDirectory, workspaceDir)
 	}
 }

@@ -68,6 +68,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	defer runnerJob.Stop(ctx)
 
 	actx.GitHub["workspace"] = runnerJob.WorkspacePath()
+	nodeReady := false
 
 	for i, step := range job.Steps {
 		id := step.ID
@@ -91,9 +92,18 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			}
 		}
 
-		command, err := SubstituteExpressions(step.Run, actx)
-		if err != nil {
-			return nil, fmt.Errorf("substitute expressions for step %s: %w", id, err)
+		var command string
+		var usesEnv map[string]string
+		if step.Uses != "" {
+			command, usesEnv, err = prepareUsesStep(ctx, runnerJob, opts.WorkspaceDir, id, step, actx, &nodeReady)
+			if err != nil {
+				return nil, fmt.Errorf("prepare uses: step %s: %w", id, err)
+			}
+		} else {
+			command, err = SubstituteExpressions(step.Run, actx)
+			if err != nil {
+				return nil, fmt.Errorf("substitute expressions for step %s: %w", id, err)
+			}
 		}
 
 		filesDir, err := os.MkdirTemp(runnerJob.FilesRoot(), "step-")
@@ -113,10 +123,18 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 			env[k] = v
 		}
 		env["GITHUB_WORKSPACE"] = runnerJob.WorkspacePath()
+		for k, v := range usesEnv {
+			env[k] = v
+		}
 
-		workingDirectory := effectiveWorkingDirectory(step, job, wf)
-		if workingDirectory == "" {
-			workingDirectory = runnerJob.WorkspacePath()
+		// uses: steps always run in the job workspace — real GitHub Actions
+		// doesn't let them override their working directory at all, unlike
+		// run: steps.
+		workingDirectory := runnerJob.WorkspacePath()
+		if step.Uses == "" {
+			if wd := effectiveWorkingDirectory(step, job, wf); wd != "" {
+				workingDirectory = wd
+			}
 		}
 
 		stepCtx := ctx
