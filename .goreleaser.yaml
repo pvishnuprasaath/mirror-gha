@@ -80,3 +80,15 @@ homebrew_casks:
       - mirror
     homepage: "https://github.com/pvishnuprasaath/mirror-gha"
     description: "Test your GitHub Actions workflows locally — for real."
+    # The binary isn't code-signed/notarized (needs a paid Apple Developer
+    # account, not set up yet) — without this, macOS Gatekeeper quarantines
+    # the download and the binary is silently killed (exit 137, no error
+    # message) on first run. Confirmed for real: v0.1.2's cask install
+    # succeeded but `mirror version` died silently until this hook was
+    # added. Revisit once code signing is worth the cost.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mirror"]
+          end

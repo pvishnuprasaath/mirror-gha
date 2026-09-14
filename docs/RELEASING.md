@@ -48,11 +48,15 @@ is enabled, and both one-time prerequisites are done as of 2026-09-14:
 - [x] `pvishnuprasaath/homebrew-tap` repository exists.
 - [x] `TAP_GITHUB_TOKEN` repo secret is set on `mirror-gha`.
 
-The next tagged release (`v0.1.1` or whatever's next) will publish the
-cask automatically. Not yet verified against a real tag push — smoke-test
-`brew install --cask pvishnuprasaath/tap/mirror-gha` after the next
-release goes out, and check that GoReleaser actually committed a formula
-to the tap repo's `Casks/` directory.
+Verified end-to-end on `v0.1.2`: cask published to the tap repo,
+`brew install --cask pvishnuprasaath/tap/mirror-gha` succeeded — but the
+installed binary was then silently killed on every run (exit 137, no
+error text) by macOS Gatekeeper's quarantine bit, since it isn't
+code-signed. Fixed with a cask post-install hook
+(`xattr -dr com.apple.quarantine`) — GoReleaser's documented workaround
+for unsigned binaries. **This fix itself hasn't been verified against a
+real release yet** — it needs the next tag to confirm the hook actually
+runs and the installed binary works without manual `xattr` intervention.
 
 Note: this project deliberately uses `homebrew_casks`, not the legacy
 `brews` (Formula) section — `brews` was fully deprecated in GoReleaser
@@ -65,6 +69,7 @@ v2.16 in favor of casks for distributing precompiled binaries.
 - Windows builds — the project doesn't support `windows-latest` as a
   runner yet either (see the design spec's Phase 2), so a Windows CLI
   binary would be premature.
-- Code signing / notarization for macOS — worth doing before wide
-  distribution, since an unsigned binary triggers Gatekeeper warnings;
-  not done yet.
+- Code signing / notarization for macOS — the real fix for the
+  Gatekeeper quarantine issue above; the `xattr` hook is a stopgap, not
+  a substitute. Requires a paid Apple Developer account. Worth doing
+  before wide distribution.
