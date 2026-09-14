@@ -9,6 +9,21 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **`matrix.include`/`matrix.exclude`.** Real GitHub Actions merge
+  semantics, checked against act's own implementation
+  (`pkg/model/workflow.go`'s `GetMatrixes`) rather than guessed: exclude
+  drops any combination matching all of an exclude entry's key/value
+  pairs (every exclude key must be a real matrix axis, or this is an
+  error), applied before include; include merges its extra keys into
+  every combination whose axis-key subset already matches (one include
+  entry can merge into more than one combination), or — if it matches
+  nothing — becomes its own standalone combination. A matrix with only
+  `include` and no axes treats each include entry as one full
+  combination directly. Previously these were parsed and explicitly
+  rejected with a "not supported yet" error. Verified for real: a
+  workflow combining a 2x2 axis matrix with one exclude and two include
+  entries (one merging, one standalone) produced exactly the 4 expected
+  job combinations.
 - **Job workspace.** Every job bind-mounts a real directory (default:
   wherever `mirror run` was invoked from, overridable via `--workdir`)
   at `/github/workspace` — a genuine bind mount, not a copy, so writes

@@ -1,0 +1,27 @@
+# Demonstrates strategy.matrix.include/exclude — real GitHub Actions merge
+# semantics: exclude drops a combination matching ALL of its key/value
+# pairs, include merges extra keys into every matching combination (or adds
+# a standalone combination if it matches none).
+#
+# Try it:
+#   mirror run examples/workflows/matrix-include-exclude.yml
+name: matrix include/exclude
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "windows-latest"]
+        version: ["16", "18"]
+        exclude:
+          - os: "windows-latest"
+            version: "16"
+        include:
+          - os: "ubuntu-latest"
+            experimental: "true"
+          - os: "macos-latest"
+            version: "20"
+    steps:
+      - name: report combination
+        run: 'echo "os=${{ matrix.os }} version=${{ matrix.version }} experimental=${{ matrix.experimental }}"'

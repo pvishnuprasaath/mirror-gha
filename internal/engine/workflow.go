@@ -47,9 +47,8 @@ type Step struct {
 }
 
 // Strategy is a job's `strategy:` block. Matrix.include/exclude are
-// parsed but explicitly unsupported (ExpandMatrix returns a clear error
-// rather than approximating GitHub Actions' fiddly merge semantics for
-// them) — plain axis matrices work today.
+// parsed as ordinary matrix keys and given real GitHub Actions merge
+// semantics by ExpandMatrix.
 type Strategy struct {
 	Matrix      map[string]interface{} `yaml:"matrix"`
 	FailFast    *bool                  `yaml:"fail-fast"`

@@ -140,10 +140,14 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
 - **`strategy.matrix`** — a job with a matrix runs once per combination of
   its axes, each with its own `matrix.<key>` context. `fail-fast`
   (defaults to `true`, matching GitHub Actions) stops starting new
-  combinations after the first failure. `matrix.include`/`exclude` are
-  parsed but rejected with a clear error rather than approximated — their
-  real merge semantics are fiddly enough that guessing wrong would be
-  worse than refusing.
+  combinations after the first failure. `matrix.include`/`exclude` have
+  real GitHub Actions merge semantics (matching act's own implementation):
+  exclude drops any combination matching all of an exclude entry's
+  key/value pairs (every exclude key must be a real matrix axis, or this
+  is an error); include merges its extra keys into every combination
+  whose axis-key subset already matches, or — if it matches nothing —
+  becomes its own standalone combination. A matrix with only `include`
+  and no axes treats each include entry as one full combination directly.
 - **`timeout-minutes`** at both job and step level.
 - **`defaults.run.shell` / `defaults.run.working-directory`** at workflow
   and job level, with the real GitHub Actions precedence: step overrides
@@ -197,7 +201,6 @@ correct; `mirror` supplies the evaluation semantics on top.
 
 ## What's not supported yet
 
-- `matrix.include` / `matrix.exclude`
 - `services:` and `container:` job fields
 - Windows and macOS runners (`windows-latest`, `macos-latest`) — these
   return a clear error naming the limitation, not a silent wrong result
