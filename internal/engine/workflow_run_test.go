@@ -14,7 +14,7 @@ import (
 // executor_test.go's scripted fakeBackend).
 type alwaysSucceedBackend struct{}
 
-func (alwaysSucceedBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
+func (alwaysSucceedBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *runner.ContainerSpec, services map[string]runner.ContainerSpec) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (j *alwaysSucceedJob) Stop(ctx context.Context) error { return os.RemoveAll
 // alwaysFailBackend fails every step it executes.
 type alwaysFailBackend struct{}
 
-func (alwaysFailBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
+func (alwaysFailBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *runner.ContainerSpec, services map[string]runner.ContainerSpec) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err

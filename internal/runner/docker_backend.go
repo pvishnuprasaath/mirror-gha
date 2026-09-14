@@ -39,7 +39,7 @@ func NewLinuxDockerBackend() *LinuxDockerBackend {
 // hostWorkspaceDir is bind-mounted read-write at containerWorkspaceMount —
 // this is a direct bind mount, not a copy, so steps operate on (and can
 // modify) the real files on disk.
-func (b *LinuxDockerBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (Job, error) {
+func (b *LinuxDockerBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *ContainerSpec, services map[string]ContainerSpec) (Job, error) {
 	if hostWorkspaceDir == "" {
 		return nil, fmt.Errorf("hostWorkspaceDir must not be empty")
 	}

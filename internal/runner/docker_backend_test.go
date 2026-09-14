@@ -29,7 +29,7 @@ func TestLinuxDockerBackend_Exec_Success(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -56,7 +56,7 @@ func TestLinuxDockerBackend_Exec_NonZeroExit(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestLinuxDockerBackend_Exec_StatePersistsAcrossSteps(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestLinuxDockerBackend_Stop_RemovesFilesRoot(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestLinuxDockerBackend_Exec_RejectsFilesDirOutsideRoot(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -160,7 +160,7 @@ func TestLinuxDockerBackend_CopyToContainer(t *testing.T) {
 	}
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestLinuxDockerBackend_StartJob_RejectsEmptyWorkspaceDir(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	_, err := backend.StartJob(context.Background(), "")
+	_, err := backend.StartJob(context.Background(), "test-job", "", nil, nil)
 	if err == nil {
 		t.Fatal("StartJob(\"\") error = nil, want error for an empty workspace dir")
 	}
@@ -202,7 +202,7 @@ func TestLinuxDockerBackend_WorkspacePath_IsMountedAndBidirectional(t *testing.T
 	}
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), hostWorkspace)
+	job, err := backend.StartJob(context.Background(), "test-job", hostWorkspace, nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -254,7 +254,7 @@ func TestLinuxDockerBackend_RunDockerAction_WorkspaceMountAndArgs(t *testing.T) 
 	}
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), workspaceDir)
+	job, err := backend.StartJob(context.Background(), "test-job", workspaceDir, nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -280,7 +280,7 @@ func TestLinuxDockerBackend_RunDockerAction_EntrypointOverride(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -304,7 +304,7 @@ func TestLinuxDockerBackend_RunDockerAction_EnvAndOutputFile(t *testing.T) {
 	requireDocker(t)
 
 	backend := NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}

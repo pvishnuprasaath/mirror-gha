@@ -83,7 +83,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	}
 	result := &JobResult{Conclusion: "success"}
 
-	runnerJob, err := backend.StartJob(ctx, opts.WorkspaceDir)
+	runnerJob, err := backend.StartJob(ctx, "job", opts.WorkspaceDir, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("start job: %w", err)
 	}

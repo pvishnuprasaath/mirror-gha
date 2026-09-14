@@ -12,7 +12,7 @@ func TestRunCompositeSteps_NestedOutputBridgesToParent(t *testing.T) {
 	requireDocker(t)
 
 	backend := runner.NewLinuxDockerBackend()
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 
 func TestDryRunBackend_ExecSucceedsWithoutDocker(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -24,7 +24,7 @@ func TestDryRunBackend_ExecSucceedsWithoutDocker(t *testing.T) {
 
 func TestDryRunBackend_StopRemovesFilesRoot(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -40,7 +40,7 @@ func TestDryRunBackend_StopRemovesFilesRoot(t *testing.T) {
 
 func TestDryRunBackend_CopyToContainerIsNoOp(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestDryRunBackend_CopyToContainerIsNoOp(t *testing.T) {
 
 func TestDryRunBackend_RunDockerActionIsNoOp(t *testing.T) {
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background(), t.TempDir())
+	job, err := backend.StartJob(context.Background(), "test-job", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestDryRunBackend_RunDockerActionIsNoOp(t *testing.T) {
 func TestDryRunBackend_WorkspacePathReportsGivenDir(t *testing.T) {
 	workspaceDir := t.TempDir()
 	backend := DryRunBackend{}
-	job, err := backend.StartJob(context.Background(), workspaceDir)
+	job, err := backend.StartJob(context.Background(), "test-job", workspaceDir, nil, nil)
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}

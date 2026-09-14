@@ -14,7 +14,7 @@ type fakeBackend struct {
 	lastJob *fakeJob // set by StartJob, lets tests inspect what ran after RunJob returns
 }
 
-func (f *fakeBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (runner.Job, error) {
+func (f *fakeBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *runner.ContainerSpec, services map[string]runner.ContainerSpec) (runner.Job, error) {
 	dir, err := os.MkdirTemp("", "fake-job-")
 	if err != nil {
 		return nil, err

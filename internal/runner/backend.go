@@ -92,11 +92,33 @@ type Job interface {
 	Stop(ctx context.Context) error
 }
 
+// ContainerSpec is one job's `container:` override, or one entry of its
+// `services:` map — the runner package's own copy, decoupled from
+// internal/engine's identically-shaped type the same way DockerActionSpec
+// already is: this package receives fully-resolved values (Username/
+// Password already validated and extracted from a raw credentials map),
+// not YAML-shaped or credential-validation concerns.
+type ContainerSpec struct {
+	Image    string
+	Env      map[string]string
+	Ports    []string
+	Volumes  []string
+	Options  string
+	Username string
+	Password string
+}
+
 // Backend starts a job's execution environment for a given `runs-on` label.
 type Backend interface {
 	// StartJob starts the environment, bind-mounting hostWorkspaceDir so
 	// its contents are visible at Job.WorkspacePath() from inside it.
-	StartJob(ctx context.Context, hostWorkspaceDir string) (Job, error)
+	// jobID names the job this environment belongs to (used to name the
+	// per-job Docker network created when services is non-empty — safe to
+	// pass an arbitrary non-empty string in tests that don't exercise
+	// services). containerSpec overrides the runner image when non-nil.
+	// services, when non-empty, starts one sidecar container per entry,
+	// reachable from the job's own environment by its map key as hostname.
+	StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *ContainerSpec, services map[string]ContainerSpec) (Job, error)
 }
 
 // ErrUnsupportedRunner is returned by SelectBackend for runner labels that

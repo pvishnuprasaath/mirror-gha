@@ -15,7 +15,7 @@ import (
 // run here" is exactly what dry-run mode is for.
 type DryRunBackend struct{}
 
-func (DryRunBackend) StartJob(ctx context.Context, hostWorkspaceDir string) (Job, error) {
+func (DryRunBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *ContainerSpec, services map[string]ContainerSpec) (Job, error) {
 	dir, err := os.MkdirTemp("", "mirror-dryrun-")
 	if err != nil {
 		return nil, fmt.Errorf("create dry-run files root: %w", err)
