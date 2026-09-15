@@ -1,0 +1,10 @@
+name: token permissions environment
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - run: 'echo "env=$GITHUB_TOKEN expr=${{ secrets.GITHUB_TOKEN }} environment=$GITHUB_ENVIRONMENT"'

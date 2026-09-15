@@ -1,0 +1,16 @@
+name: workflow commands check
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::group::setup"
+          echo "::add-mask::topsecret123"
+          echo "the token is topsecret123"
+          echo "::endgroup::"
+          echo "::error::deliberate error annotation"
+          echo "::warning::deliberate warning annotation"
+          echo "::notice::deliberate notice annotation"
+          echo "::debug::hidden by default"
+      - run: echo "second step also mentions topsecret123"
