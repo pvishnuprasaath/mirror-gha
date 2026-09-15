@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -104,6 +105,42 @@ func lookupAnyCI(m map[string]interface{}, key string) interface{} {
 	return nil
 }
 
+// resolveNestedPath traverses an arbitrary JSON-shaped value (as produced
+// by encoding/json's generic Unmarshal into interface{} — map[string]
+// interface{} for objects, []interface{} for arrays, float64/string/bool/
+// nil for scalars) by the given path segments. Used for github.event.*,
+// which can be arbitrarily deep and shaped since it holds a real (or
+// synthetic) GitHub webhook payload, not a fixed set of known keys the
+// way every other github.* field is. Returns nil, nil for a path that
+// doesn't resolve (a missing property, an out-of-range index) rather than
+// an error, matching this codebase's existing leniency for
+// steps.<id>.outputs.<name>/needs.<job>.outputs.<name> — not every
+// payload (real or synthetic) includes every field a workflow might
+// reference.
+func resolveNestedPath(val interface{}, remaining []string) (interface{}, error) {
+	if len(remaining) == 0 {
+		return val, nil
+	}
+	key := remaining[0]
+	switch v := val.(type) {
+	case map[string]interface{}:
+		for k, mv := range v {
+			if strings.EqualFold(k, key) {
+				return resolveNestedPath(mv, remaining[1:])
+			}
+		}
+		return nil, nil
+	case []interface{}:
+		idx, err := strconv.Atoi(key)
+		if err != nil || idx < 0 || idx >= len(v) {
+			return nil, nil
+		}
+		return resolveNestedPath(v[idx], remaining[1:])
+	default:
+		return nil, nil
+	}
+}
+
 func (c *Context) resolvePath(path []string) (interface{}, error) {
 	if len(path) == 0 {
 		return nil, fmt.Errorf("empty context path")
@@ -115,6 +152,12 @@ func (c *Context) resolvePath(path []string) (interface{}, error) {
 		}
 		return lookupStringCI(c.Env, path[1]), nil
 	case "github":
+		if len(path) < 2 {
+			return nil, fmt.Errorf("invalid github reference: %s", strings.Join(path, "."))
+		}
+		if strings.EqualFold(path[1], "event") {
+			return resolveNestedPath(c.GitHub["event"], path[2:])
+		}
 		if len(path) != 2 {
 			return nil, fmt.Errorf("invalid github reference: %s", strings.Join(path, "."))
 		}

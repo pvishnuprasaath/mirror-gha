@@ -108,6 +108,87 @@ func TestResolvePath_Secrets(t *testing.T) {
 	}
 }
 
+func TestResolvePath_GithubEventNestedMap(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.GitHub["event"] = map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"number": float64(42),
+			"head":   map[string]interface{}{"ref": "feature-branch"},
+		},
+	}
+
+	got, err := ctx.resolvePath([]string{"github", "event", "pull_request", "number"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	if got != float64(42) {
+		t.Errorf("resolvePath() = %v, want 42", got)
+	}
+
+	got, err = ctx.resolvePath([]string{"github", "event", "pull_request", "head", "ref"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	if got != "feature-branch" {
+		t.Errorf("resolvePath() = %v, want feature-branch", got)
+	}
+}
+
+func TestResolvePath_GithubEventCaseInsensitiveKeys(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.GitHub["event"] = map[string]interface{}{"Ref": "refs/heads/main"}
+
+	got, err := ctx.resolvePath([]string{"github", "event", "ref"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	if got != "refs/heads/main" {
+		t.Errorf("resolvePath() = %v, want refs/heads/main", got)
+	}
+}
+
+func TestResolvePath_GithubEventArrayIndex(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.GitHub["event"] = map[string]interface{}{
+		"commits": []interface{}{
+			map[string]interface{}{"message": "first"},
+			map[string]interface{}{"message": "second"},
+		},
+	}
+
+	got, err := ctx.resolvePath([]string{"github", "event", "commits", "1", "message"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	if got != "second" {
+		t.Errorf("resolvePath() = %v, want second", got)
+	}
+}
+
+func TestResolvePath_GithubEventMissingPathReturnsNil(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.GitHub["event"] = map[string]interface{}{"ref": "refs/heads/main"}
+
+	got, err := ctx.resolvePath([]string{"github", "event", "pull_request", "number"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v, want nil error for a missing path", err)
+	}
+	if got != nil {
+		t.Errorf("resolvePath() = %v, want nil for a missing path", got)
+	}
+}
+
+func TestResolvePath_GithubEventWhenEventFieldAbsent(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	got, err := ctx.resolvePath([]string{"github", "event", "ref"})
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	if got != nil {
+		t.Errorf("resolvePath() = %v, want nil when github.event was never set", got)
+	}
+}
+
 func TestCallStatusFunc(t *testing.T) {
 	ctx := NewContext(&Workflow{}, &Job{})
 
