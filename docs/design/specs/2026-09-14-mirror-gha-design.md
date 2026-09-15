@@ -1078,6 +1078,122 @@ behavior) now that the *default* behavior for its 3-combination matrix
 would otherwise run all three concurrently in one wave — a real behavior
 change this sub-project causes, not a test bug being fixed incidentally.
 
+## Triggers and Event Payloads
+
+**Scope:** `github.event_name`/`github.event`/`GITHUB_EVENT_NAME`/
+`GITHUB_EVENT_PATH` wired up for real, replacing the current hardcoded
+`event_name: "workflow_dispatch"` stub — plus, by explicit request beyond
+what act itself does, synthetic default event payloads for `push`,
+`pull_request`, `workflow_dispatch`, `workflow_call`,
+`repository_dispatch`, and `workflow_run` so common `github.event.*`
+fields work out of the box without a hand-written payload file. Checked
+against act's actual source (`nektos/act`, `pkg/runner/runner.go`'s event
+loading, `pkg/model/github_context.go`, `cmd/root.go`'s event-name
+resolution) per the standing direction — with one deliberate, explicit
+divergence documented below.
+
+**act's own mechanism, adopted directly for the real (non-synthetic)
+path:** a `--event-path`/`-e` flag loads a real, user-supplied event JSON
+file (`pkg/runner/runner.go`'s `configure()`); with no flag, act falls
+back to a bare `{}` (or `{"inputs": {...}}` if `--input` flags were
+passed) — **act never fabricates a schema-correct fake payload per event
+type**, confirmed via source. `github.event` is a raw, untyped
+`map[string]interface{}` populated by a direct `json.Unmarshal` of
+whatever was loaded (`pkg/model/github_context.go`'s `GithubContext.Event
+map[string]interface{}`) — no per-event-type schema or typing exists in
+act, matching this project's own preference for a generic JSON-shaped
+context value over hand-rolled per-event Go structs.
+`GITHUB_EVENT_NAME`/`GITHUB_EVENT_PATH` are set as real step env vars
+(`pkg/runner/run_context.go`'s `withGithubEnv`), with `GITHUB_EVENT_PATH`
+pointing at a real file act writes into the job container
+(`workflow/event.json` under its own `GetActPath()` convention) — not
+just an in-memory expression-context value, since real actions
+(`actions/github-script` and others) read the file directly.
+
+**mirror-gha's `--event-path`/`--event-name` flags mirror this exactly.**
+`--event-path <file>` loads real user-supplied JSON (default: none).
+`--event-name <name>` selects `github.event_name`, resolved with the same
+priority chain act uses at `cmd/root.go`'s CLI-arg resolution — explicit
+flag wins; else, if the workflow's `on:` block names exactly one trigger,
+use it; else, default to `"push"` (act's own final fallback) — requiring
+a new `Workflow.OnEventNames() ([]string, error)` helper, since
+`Workflow.On` is currently an unparsed raw `interface{}` with no existing
+accessor for the three YAML shapes GitHub Actions allows (`on: push`,
+`on: [push, pull_request]`, `on: {push: {...}, pull_request: {...}}`).
+
+**The one deliberate divergence from act, at explicit request: synthetic
+default payloads per trigger type when `--event-path` isn't given.**
+There is no single "correct" fake payload — real GitHub webhook payloads
+vary per repository, PR, and commit — so these are plausible, structurally
+real shapes (matching GitHub's own public webhook-payload documentation,
+not act-specific, since act has no reference implementation for this at
+all) populated with the same placeholder conventions this project already
+uses elsewhere (`sha: "000...0"`, `repository: "local/mirror-gha"`,
+`ref: "refs/heads/main"`, `actor: "local"`). Covers exactly the six
+trigger types named in scope; any other trigger name (`release`,
+`issues`, `schedule`, etc.) falls back to `{}`, matching act's own
+default for the untyped case rather than attempting exhaustive coverage
+of GitHub's several dozen trigger types. `workflow_dispatch`/
+`workflow_call`'s declared `inputs:` are represented structurally (an
+empty `inputs: {}` object) but **not populated with real user-supplied
+values** — actually wiring a `--input NAME=VALUE`-style flag into
+`github.event.inputs.*` is a distinct, separately-scoped feature (it
+would need its own new CLI mechanism, not just a payload shape), not
+attempted in this sub-project.
+
+**`github.event.*` needs a genuinely new expression-resolution path —
+the existing `github` context case only ever handles flat two-segment
+lookups (`github.workspace`, `github.sha`), but `github.event.*` needs
+arbitrary-depth traversal into whatever JSON structure was loaded** (e.g.
+`github.event.pull_request.head.ref`, four segments deep). A new
+`resolveNestedPath(val interface{}, remaining []string) (interface{},
+error)` helper recurses through `map[string]interface{}` (case-insensitive
+key match, matching every other context lookup in this codebase) and
+`[]interface{}` (numeric index) — returning `nil, nil` for a path that
+doesn't resolve (a missing property, an out-of-range index), matching
+this codebase's existing leniency for `steps.<id>.outputs.<name>`/
+`needs.<job>.outputs.<name>` rather than erroring on every reference to
+an absent field, since real payloads (and this project's own synthetic
+ones) don't include every field every workflow might reference.
+
+**Wiring reuses the existing `/mirror-*` `CopyToContainer` convention
+established for the macOS host backend, rather than inventing a new
+per-job file-staging mechanism.** `GITHUB_EVENT_PATH` must point at a
+real file inside whatever environment a step actually runs in (a Docker
+container, or the real host for macOS jobs) — the same "engine bakes a
+synthetic absolute path, each backend makes it real" pattern already
+built for `/mirror-node`/`/mirror-actions/<id>`. `RunJob` copies a host
+directory containing exactly one file (`event.json`) to `/mirror-event`
+via `Job.CopyToContainer` (already implemented generically by every
+backend), then sets `actx.GitHub["event_path"] = "/mirror-event/event.json"`
+— exported as `GITHUB_EVENT_PATH` automatically by the existing
+`exportGitHubContextEnv` generic mechanism, no new env-export code
+needed. `actx.GitHub["event_name"]` replaces the hardcoded stub the same
+way. `actx.GitHub["event"]` holds the parsed `map[string]interface{}`
+directly — `exportGitHubContextEnv`'s existing `string`-only type check
+already skips it safely (there is no real `GITHUB_EVENT` env var in
+GitHub Actions either, only `GITHUB_EVENT_PATH`/`GITHUB_EVENT_NAME`).
+
+**Explicitly out of scope, matching act's own choice (confirmed via
+source: the pattern-matching code for this exists in act but is
+completely unwired, dead code) rather than an oversight:** `on: push:
+branches/tags/paths` and `on: pull_request: types/branches` sub-filters.
+These exist in real GitHub Actions to decide whether the platform's
+server-side trigger fires a workflow run *at all* — a concept with no
+meaning once a user has already explicitly invoked `mirror run
+<file>.yml` locally; the job's own `if:` conditions (checking
+`github.event_name`, `github.event.pull_request.base.ref`, etc.,
+already fully supported) are the mechanism that still matters locally.
+
+**Testing:** unit tests for `Workflow.OnEventNames()` (all three YAML
+shapes), the event-name resolution priority chain, `resolveNestedPath`
+(map traversal, array indexing, missing-path leniency), and each of the
+six synthetic default payload builders. Real end-to-end verification: a
+workflow with no `--event-path` given, checking several `github.event.*`
+fields for each of the six covered trigger types via `if:` conditions and
+`run:` step output, plus one run with a real user-supplied
+`--event-path` file confirming it overrides the synthetic default.
+
 ## Data flow
 
 ```
