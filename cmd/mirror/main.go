@@ -55,6 +55,8 @@ type runMode struct {
 	localRepositoryOverrides map[string]string
 	vars                     map[string]string
 	debug                    bool
+	eventPath                string
+	eventName                string
 }
 
 // stringSliceFlag implements flag.Value for a repeatable string flag —
@@ -169,6 +171,8 @@ func runMain(args []string) int {
 	fs.Var(&varFlags, "var", "variable to make available to the vars.* context: NAME=VALUE or bare NAME (repeatable)")
 	varFile := fs.String("var-file", ".vars", "file with NAME=VALUE vars.* entries, one per line (missing file is not an error)")
 	debug := fs.Bool("debug", false, "show ::debug:: workflow command output and export ACTIONS_STEP_DEBUG=true to steps (hidden by default, matching real GitHub Actions)")
+	eventPath := fs.String("event-path", "", "path to a real event JSON file (default: a synthetic payload for the resolved event name)")
+	eventName := fs.String("event-name", "", "github.event_name to use (default: the workflow's only on: trigger, or \"push\")")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] [--local-repository owner/repo[@ref]=local/path] [--var NAME=VALUE] [--var-file <path>] <workflow.yml>")
 		fs.PrintDefaults()
@@ -198,7 +202,7 @@ func runMain(args []string) int {
 		return 1
 	}
 
-	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides, vars: vars, debug: *debug})
+	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides, vars: vars, debug: *debug, eventPath: *eventPath, eventName: *eventName})
 }
 
 // runCommand parses the workflow at path and, depending on mode, either
@@ -224,6 +228,20 @@ func runCommand(path string, mode runMode) int {
 		return listJobs(wf)
 	case mode.graph:
 		return printGraph(wf)
+	}
+
+	eventName := mode.eventName
+	if eventName == "" {
+		names, err := wf.OnEventNames()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse on: field: %v\n", err)
+			return 1
+		}
+		if len(names) == 1 {
+			eventName = names[0]
+		} else {
+			eventName = "push"
+		}
 	}
 
 	workspaceDir := mode.workdir
@@ -259,6 +277,29 @@ func runCommand(path string, mode runMode) int {
 	if mode.debug {
 		extraEnv["ACTIONS_STEP_DEBUG"] = "true"
 	}
+
+	var eventJSON string
+	if mode.eventPath != "" {
+		data, err := os.ReadFile(mode.eventPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read event path: %v\n", err)
+			return 1
+		}
+		eventJSON = string(data)
+	} else {
+		eventJSON = engine.DefaultEventPayload(eventName)
+	}
+	eventDir, err := os.MkdirTemp("", "mirror-event-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create event dir: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(eventDir)
+	if err := os.WriteFile(filepath.Join(eventDir, "event.json"), []byte(eventJSON), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "write event.json: %v\n", err)
+		return 1
+	}
+
 	if !mode.dryRun {
 		storeRoot, err := cacheserver.StoreRoot()
 		if err != nil {
@@ -297,7 +338,7 @@ func runCommand(path string, mode runMode) int {
 		extraEnv["ACTIONS_RESULTS_URL"] = extraEnv["ACTIONS_RUNTIME_URL"]
 	}
 
-	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars, extraEnv)
+	result, err := engine.RunWorkflow(context.Background(), wf, selectBackend, workspaceDir, mode.localRepositoryOverrides, mode.vars, extraEnv, eventName, eventDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1

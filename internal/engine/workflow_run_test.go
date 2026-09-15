@@ -110,7 +110,7 @@ func TestRunWorkflow_RunsInDependencyOrder(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil, "push", "")
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRunWorkflow_SkipsJobWhenNeedFails(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil, "push", "")
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -162,7 +162,7 @@ func TestRunWorkflow_PropagatesJobOutputsToNeeds(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil, "push", "")
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -191,7 +191,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, failSelector, t.TempDir(), nil, nil, nil, "push", "")
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestRunWorkflow_VarsReachExpressionContext(t *testing.T) {
 		},
 	}
 
-	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, map[string]string{"ENVIRONMENT": "staging"}, nil)
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, map[string]string{"ENVIRONMENT": "staging"}, nil, "push", "")
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRunWorkflow_RejectsEmptyWorkspaceDir(t *testing.T) {
 		},
 	}
 
-	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil, nil, nil)
+	_, err := RunWorkflow(context.Background(), wf, succeedSelector, "", nil, nil, nil, "push", "")
 	if err == nil {
 		t.Fatal("RunWorkflow() with empty workspaceDir error = nil, want error")
 	}
@@ -283,7 +283,7 @@ func TestRunWorkflow_MatrixCombinationsRunConcurrently(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil, "push", "")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
@@ -317,7 +317,7 @@ func TestRunWorkflow_ConcurrencyGroupSerializesSameGroupCombinations(t *testing.
 	wf.Jobs["build"] = setJobConcurrency(t, wf.Jobs["build"], "shared-group", false)
 
 	start := time.Now()
-	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil)
+	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil, "push", "")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("RunWorkflow() error = %v", err)
@@ -355,4 +355,26 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func TestRunWorkflow_ThreadsEventNameAndJSONToJobs(t *testing.T) {
+	eventDir := t.TempDir()
+	if err := os.WriteFile(eventDir+"/event.json", []byte(`{"ref":"refs/heads/main"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"a": {RunsOn: "ubuntu-latest", Steps: []Step{{ID: "s", Run: "echo a"}}},
+		},
+	}
+
+	result, err := RunWorkflow(context.Background(), wf, succeedSelector, t.TempDir(), nil, nil, nil, "push", eventDir)
+	if err != nil {
+		t.Fatalf("RunWorkflow() error = %v", err)
+	}
+	if result.Jobs["a"].Conclusion != "success" {
+		t.Fatalf("Conclusion = %q, want success", result.Jobs["a"].Conclusion)
+	}
 }
