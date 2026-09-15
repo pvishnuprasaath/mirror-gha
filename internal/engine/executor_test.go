@@ -722,3 +722,38 @@ func TestRunJob_DebugHiddenUnlessActionsStepDebugSet(t *testing.T) {
 		t.Errorf("Stdout = %q, want the debug line shown when ACTIONS_STEP_DEBUG=true", result.Steps[0].Stdout)
 	}
 }
+
+func TestRunJob_StagesEventJSONAndExposesGithubEvent(t *testing.T) {
+	eventDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(eventDir, "event.json"), []byte(`{"ref":"refs/heads/main","pull_request":{"number":7}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	wf := &Workflow{Name: "t"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "s", Run: "echo hi"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+
+	_, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{
+		WorkspaceDir: t.TempDir(),
+		EventName:    "pull_request",
+		EventJSONDir: eventDir,
+	})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if backend.lastJob == nil {
+		t.Fatal("backend.lastJob is nil")
+	}
+	if len(backend.lastJob.execSpecs) != 1 {
+		t.Fatalf("execSpecs = %v, want exactly 1 step executed", backend.lastJob.execSpecs)
+	}
+	if got := backend.lastJob.execSpecs[0].Env["GITHUB_EVENT_NAME"]; got != "pull_request" {
+		t.Errorf(`Env["GITHUB_EVENT_NAME"] = %q, want "pull_request"`, got)
+	}
+	if got := backend.lastJob.execSpecs[0].Env["GITHUB_EVENT_PATH"]; got != "/mirror-event/event.json" {
+		t.Errorf(`Env["GITHUB_EVENT_PATH"] = %q, want "/mirror-event/event.json"`, got)
+	}
+}

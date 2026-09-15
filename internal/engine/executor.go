@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +42,8 @@ type JobRunOptions struct {
 	LocalRepositoryOverrides map[string]string
 	ExtraEnv                 map[string]string
 	JobID                    string // names the job for Docker network naming when it has services:
+	EventName                string // github.event_name / GITHUB_EVENT_NAME — empty means the caller didn't set one (RunWorkflow always sets it)
+	EventJSONDir             string // host directory containing exactly one file, event.json — staged to /mirror-event via CopyToContainer, matching the existing /mirror-node convention. Empty means no event payload is staged.
 }
 
 // toRunnerContainerSpec converts an engine ContainerSpec (YAML-shaped,
@@ -156,6 +160,25 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		return nil, fmt.Errorf("start job: %w", err)
 	}
 	defer runnerJob.Stop(ctx)
+
+	if opts.EventName != "" {
+		actx.GitHub["event_name"] = opts.EventName
+	}
+	if opts.EventJSONDir != "" {
+		data, err := os.ReadFile(filepath.Join(opts.EventJSONDir, "event.json"))
+		if err != nil {
+			return nil, fmt.Errorf("read event.json: %w", err)
+		}
+		var event map[string]interface{}
+		if err := json.Unmarshal(data, &event); err != nil {
+			return nil, fmt.Errorf("parse event.json: %w", err)
+		}
+		actx.GitHub["event"] = event
+		if err := runnerJob.CopyToContainer(ctx, opts.EventJSONDir, "/mirror-event"); err != nil {
+			return nil, fmt.Errorf("stage event.json: %w", err)
+		}
+		actx.GitHub["event_path"] = "/mirror-event/event.json"
+	}
 
 	actx.GitHub["workspace"] = runnerJob.WorkspacePath()
 	nodeReady := false
