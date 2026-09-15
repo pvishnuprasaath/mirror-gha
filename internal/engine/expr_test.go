@@ -141,14 +141,6 @@ func TestEvalExpression_BuiltinFunctions(t *testing.T) {
 	}
 }
 
-func TestEvalExpression_HashFilesReturnsClearError(t *testing.T) {
-	ctx := newTestContext()
-	_, err := EvalExpression("hashFiles('**/go.sum')", ctx)
-	if err == nil {
-		t.Fatal("EvalExpression(hashFiles(...)) error = nil, want a clear unsupported error")
-	}
-}
-
 func TestEvalBool_IfCondition(t *testing.T) {
 	ctx := newTestContext()
 	ok, err := EvalBool("${{ env.JOB == 'j' }}", ctx)

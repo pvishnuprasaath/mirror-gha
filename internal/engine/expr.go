@@ -21,10 +21,11 @@ import (
 // on top of that parsed tree.
 //
 // Supported functions: success()/failure()/always()/cancelled(), contains(),
-// startsWith(), endsWith(), format(), join(), toJSON(), fromJSON().
-// hashFiles() is not implemented — it depends on a real checked-out
-// workspace, which doesn't exist yet — and returns a clear error rather
-// than a wrong result.
+// startsWith(), endsWith(), format(), join(), toJSON(), fromJSON(),
+// hashFiles() (see hashfiles.go — a real SHA-256-over-matched-files
+// implementation, not an approximation, though its glob support is a
+// hand-rolled subset of @actions/glob: literal segments/*/**/?, no "!"
+// negation or brace expansion).
 func EvalExpression(expr string, ctx *Context) (interface{}, error) {
 	node, err := parseExpr(expr)
 	if err != nil {
@@ -312,7 +313,18 @@ func callFunction(name string, args []interface{}, ctx *Context) (interface{}, e
 		}
 		return v, nil
 	case "hashfiles":
-		return nil, fmt.Errorf("hashFiles() is not supported yet (requires a real checked-out workspace)")
+		if len(args) == 0 {
+			return nil, fmt.Errorf("hashFiles() takes at least 1 argument")
+		}
+		workspace, _ := ctx.GitHub["workspace"].(string)
+		if workspace == "" {
+			return nil, fmt.Errorf("hashFiles() requires github.workspace to be set")
+		}
+		patterns := make([]string, len(args))
+		for i, a := range args {
+			patterns[i] = toStr(a)
+		}
+		return hashFiles(workspace, patterns)
 	default:
 		return nil, fmt.Errorf("unsupported function %q", name)
 	}
