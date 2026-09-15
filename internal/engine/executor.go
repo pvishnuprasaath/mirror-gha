@@ -80,6 +80,12 @@ type runStepParams struct {
 	NodeReady                *bool
 	LocalRepositoryOverrides map[string]string
 	Depth                    int
+	// Masks accumulates every value registered via ::add-mask:: across
+	// this job's steps (composite actions share the same pointer with
+	// their parent — see composite_step.go), redacted from this and every
+	// subsequent step's stdout/stderr, matching act's own per-job mask
+	// registry.
+	Masks *[]string
 }
 
 // RunJob executes every step of job in order against backend, evaluating
@@ -153,6 +159,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 
 	actx.GitHub["workspace"] = runnerJob.WorkspacePath()
 	nodeReady := false
+	var masks []string
 
 	p := runStepParams{
 		Workflow:                 wf,
@@ -161,6 +168,7 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 		WorkspaceDir:             opts.WorkspaceDir,
 		NodeReady:                &nodeReady,
 		LocalRepositoryOverrides: opts.LocalRepositoryOverrides,
+		Masks:                    &masks,
 	}
 
 	var pendingPosts []pendingPostAction
@@ -441,13 +449,23 @@ func runStep(ctx context.Context, p runStepParams, actx *Context, step Step, id 
 		pending = &pendingPostAction{postAction: *plan.Post, StepID: id, StateFile: fileSet.StateFile}
 	}
 
+	showDebug := actx.Env["ACTIONS_STEP_DEBUG"] == "true"
+	stdout, stdoutMasks := commands.ProcessWorkflowCommands(stepResult.Stdout, showDebug)
+	stderr, stderrMasks := commands.ProcessWorkflowCommands(stepResult.Stderr, showDebug)
+	if p.Masks != nil {
+		*p.Masks = append(*p.Masks, stdoutMasks...)
+		*p.Masks = append(*p.Masks, stderrMasks...)
+		stdout = commands.RedactMasks(stdout, *p.Masks)
+		stderr = commands.RedactMasks(stderr, *p.Masks)
+	}
+
 	return StepReport{
 		ID:         id,
 		Name:       step.Name,
 		Conclusion: conclusion,
 		ExitCode:   stepResult.ExitCode,
-		Stdout:     stepResult.Stdout,
-		Stderr:     stepResult.Stderr,
+		Stdout:     stdout,
+		Stderr:     stderr,
 	}, pending, nil
 }
 

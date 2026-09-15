@@ -71,6 +71,7 @@ func runCompositeSteps(ctx context.Context, p runStepParams, parentActx *Context
 		NodeReady:                p.NodeReady,
 		LocalRepositoryOverrides: p.LocalRepositoryOverrides,
 		Depth:                    p.Depth + 1,
+		Masks:                    p.Masks,
 	}
 
 	conclusion = "success"

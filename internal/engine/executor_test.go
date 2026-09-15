@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mirror-gha/internal/runner"
@@ -630,5 +631,94 @@ jobs:
 	}
 	if got := backend.lastJob.execSpecs[0].Env["GITHUB_ENVIRONMENT"]; got != "production" {
 		t.Errorf(`step Env["GITHUB_ENVIRONMENT"] = %q, want "production"`, got)
+	}
+}
+
+func TestRunJob_WorkflowCommandsRenderedAndMaskPropagatesAcrossSteps(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			{ID: "one", Run: "echo one"},
+			{ID: "two", Run: "echo two"},
+		},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{
+		{ExitCode: 0, Stdout: "::group::setup\n::add-mask::supersecret\ntoken is supersecret\n::endgroup::\n"},
+		{ExitCode: 0, Stdout: "later output mentions supersecret again\n"},
+	}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("len(Steps) = %d, want 2", len(result.Steps))
+	}
+
+	first := result.Steps[0].Stdout
+	if strings.Contains(first, "::group::") || strings.Contains(first, "::add-mask::") || strings.Contains(first, "::endgroup::") {
+		t.Errorf("first step Stdout = %q, want raw workflow commands stripped/rendered", first)
+	}
+	if !strings.Contains(first, "▶ setup") {
+		t.Errorf("first step Stdout = %q, want a rendered group marker", first)
+	}
+	if strings.Contains(first, "supersecret") {
+		t.Errorf("first step Stdout = %q, want the masked value redacted even in the step that registered it", first)
+	}
+	if !strings.Contains(first, "token is ***") {
+		t.Errorf("first step Stdout = %q, want token is *** after redaction", first)
+	}
+
+	second := result.Steps[1].Stdout
+	if strings.Contains(second, "supersecret") {
+		t.Errorf("second step Stdout = %q, want the mask registered in step one redacted here too", second)
+	}
+	if !strings.Contains(second, "***") {
+		t.Errorf("second step Stdout = %q, want *** present", second)
+	}
+}
+
+func TestRunJob_ErrorAnnotationDoesNotFailStep(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo one"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{
+		{ExitCode: 0, Stdout: "::error::something looked wrong but exit code is 0\n"},
+	}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{WorkspaceDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if result.Steps[0].Conclusion != "success" {
+		t.Errorf("Conclusion = %q, want success (an ::error:: annotation must not fail the step by itself)", result.Steps[0].Conclusion)
+	}
+	if !strings.Contains(result.Steps[0].Stdout, "❌ something looked wrong") {
+		t.Errorf("Stdout = %q, want the rendered error annotation", result.Steps[0].Stdout)
+	}
+}
+
+func TestRunJob_DebugHiddenUnlessActionsStepDebugSet(t *testing.T) {
+	wf := &Workflow{Name: "test"}
+	job := &Job{
+		RunsOn: "ubuntu-latest",
+		Steps:  []Step{{ID: "one", Run: "echo one"}},
+	}
+	backend := &fakeBackend{results: []runner.StepResult{
+		{ExitCode: 0, Stdout: "::debug::internal detail\nvisible\n"},
+	}}
+
+	result, err := RunJob(context.Background(), wf, job, backend, JobRunOptions{
+		WorkspaceDir: t.TempDir(),
+		ExtraEnv:     map[string]string{"ACTIONS_STEP_DEBUG": "true"},
+	})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if !strings.Contains(result.Steps[0].Stdout, "🐛 internal detail") {
+		t.Errorf("Stdout = %q, want the debug line shown when ACTIONS_STEP_DEBUG=true", result.Steps[0].Stdout)
 	}
 }

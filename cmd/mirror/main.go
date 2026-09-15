@@ -54,6 +54,7 @@ type runMode struct {
 	workdir                  string // "" means: resolve from the process's current directory
 	localRepositoryOverrides map[string]string
 	vars                     map[string]string
+	debug                    bool
 }
 
 // stringSliceFlag implements flag.Value for a repeatable string flag —
@@ -167,6 +168,7 @@ func runMain(args []string) int {
 	var varFlags stringSliceFlag
 	fs.Var(&varFlags, "var", "variable to make available to the vars.* context: NAME=VALUE or bare NAME (repeatable)")
 	varFile := fs.String("var-file", ".vars", "file with NAME=VALUE vars.* entries, one per line (missing file is not an error)")
+	debug := fs.Bool("debug", false, "show ::debug:: workflow command output and export ACTIONS_STEP_DEBUG=true to steps (hidden by default, matching real GitHub Actions)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: mirror run [--list|--graph|--dryrun] [--workdir <path>] [--local-repository owner/repo[@ref]=local/path] [--var NAME=VALUE] [--var-file <path>] <workflow.yml>")
 		fs.PrintDefaults()
@@ -196,7 +198,7 @@ func runMain(args []string) int {
 		return 1
 	}
 
-	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides, vars: vars})
+	return runCommand(rest[0], runMode{list: *list, graph: *graph, dryRun: *dryRun, workdir: *workdir, localRepositoryOverrides: overrides, vars: vars, debug: *debug})
 }
 
 // runCommand parses the workflow at path and, depending on mode, either
@@ -253,6 +255,9 @@ func runCommand(path string, mode runMode) int {
 
 	extraEnv := map[string]string{
 		"GITHUB_TOKEN": fakeGitHubToken(),
+	}
+	if mode.debug {
+		extraEnv["ACTIONS_STEP_DEBUG"] = "true"
 	}
 	if !mode.dryRun {
 		storeRoot, err := cacheserver.StoreRoot()
