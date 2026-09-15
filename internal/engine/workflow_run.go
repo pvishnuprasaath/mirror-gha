@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"mirror-gha/internal/runner"
@@ -12,9 +13,11 @@ import (
 
 // WorkflowResult is the outcome of running every job in a workflow, keyed
 // by job name. A matrixed job's Steps is the concatenation of every
-// combination's steps, in the order they ran; its Outputs reflect the
-// *last* combination to finish — a known GitHub Actions gotcha for
-// matrixed job outputs, reproduced deliberately rather than accidentally.
+// combination's steps, in combination-index order (not completion order,
+// for deterministic output) — its Outputs reflect whichever combination's
+// completion happens to write last under real concurrent execution, a
+// genuine race that matches real GitHub Actions' own documented
+// nondeterminism for matrixed job outputs, not an approximation of it.
 type WorkflowResult struct {
 	Jobs  map[string]*JobResult
 	Order []string // job names in the order they ran (topological, deterministic)
@@ -71,54 +74,134 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 			failFast = *job.Strategy.FailFast
 		}
 
+		maxParallel := 4
+		if job.Strategy != nil && job.Strategy.MaxParallel > 0 {
+			maxParallel = job.Strategy.MaxParallel
+		}
+		if len(combos) < maxParallel {
+			maxParallel = len(combos)
+		}
+		if maxParallel < 1 {
+			maxParallel = 1
+		}
+
+		jobConcurrency, err := job.Concurrency()
+		if err != nil {
+			return nil, fmt.Errorf("job %s: %w", name, err)
+		}
+
+		comboSteps := make([][]StepReport, len(combos))
+		comboFailed := make([]bool, len(combos))
+		comboSkipped := make([]bool, len(combos))
+
+		var mu sync.Mutex
 		conclusion := "success"
-		var allSteps []StepReport
 		var lastOutputs map[string]string
 		stopStartingNew := false
+		var firstErr error
 
-		for _, combo := range combos {
-			if stopStartingNew {
+		scheduler := newConcurrencyScheduler()
+		sem := make(chan struct{}, maxParallel)
+		var wg sync.WaitGroup
+
+		for i, combo := range combos {
+			wg.Add(1)
+			go func(i int, combo MatrixCombination) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				mu.Lock()
+				skip := stopStartingNew
+				mu.Unlock()
+				if skip {
+					comboSkipped[i] = true
+					return
+				}
+
+				runCtx := ctx
+				var cancel context.CancelFunc
+				if job.TimeoutMinutes > 0 {
+					runCtx, cancel = context.WithTimeout(ctx, time.Duration(job.TimeoutMinutes*float64(time.Minute)))
+					defer cancel()
+				}
+
+				var release func()
+				if jobConcurrency != nil {
+					comboCtx := NewContext(wf, &job)
+					comboCtx.Matrix = combo
+					comboCtx.Vars = vars
+					group, err := SubstituteExpressions(jobConcurrency.Group, comboCtx)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = fmt.Errorf("job %s%s: concurrency group: %w", name, MatrixSuffix(combo), err)
+						}
+						mu.Unlock()
+						return
+					}
+					runCtx, release = scheduler.acquire(runCtx, group, jobConcurrency.CancelInProgress)
+				} else {
+					release = func() {}
+				}
+				defer release()
+
+				backend, err := selectBackend(job.RunsOn)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
+					}
+					mu.Unlock()
+					return
+				}
+
+				jr, err := RunJob(runCtx, wf, &job, backend, JobRunOptions{
+					Needs:                    outcomes,
+					Matrix:                   combo,
+					WorkspaceDir:             workspaceDir,
+					LocalRepositoryOverrides: localRepositoryOverrides,
+					Vars:                     vars,
+					ExtraEnv:                 extraEnv,
+					JobID:                    name,
+				})
+
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					if firstErr == nil {
+						firstErr = fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
+					}
+					return
+				}
+				comboSteps[i] = jr.Steps
+				lastOutputs = jr.Outputs
+				if jr.Conclusion != "success" {
+					comboFailed[i] = true
+					if failFast {
+						stopStartingNew = true
+					}
+				}
+			}(i, combo)
+		}
+		wg.Wait()
+
+		if firstErr != nil {
+			return nil, firstErr
+		}
+
+		var allSteps []StepReport
+		for i, combo := range combos {
+			if comboSkipped[i] {
 				allSteps = append(allSteps, StepReport{
 					Name:       name + MatrixSuffix(combo),
 					Conclusion: "skipped",
 				})
 				continue
 			}
-
-			backend, err := selectBackend(job.RunsOn)
-			if err != nil {
-				return nil, fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
-			}
-
-			runCtx := ctx
-			var cancel context.CancelFunc
-			if job.TimeoutMinutes > 0 {
-				runCtx, cancel = context.WithTimeout(ctx, time.Duration(job.TimeoutMinutes*float64(time.Minute)))
-			}
-
-			jr, err := RunJob(runCtx, wf, &job, backend, JobRunOptions{
-				Needs:                    outcomes,
-				Matrix:                   combo,
-				WorkspaceDir:             workspaceDir,
-				LocalRepositoryOverrides: localRepositoryOverrides,
-				Vars:                     vars,
-				ExtraEnv:                 extraEnv,
-				JobID:                    name,
-			})
-			if cancel != nil {
-				cancel()
-			}
-			if err != nil {
-				return nil, fmt.Errorf("job %s%s: %w", name, MatrixSuffix(combo), err)
-			}
-
-			allSteps = append(allSteps, jr.Steps...)
-			lastOutputs = jr.Outputs
-			if jr.Conclusion != "success" {
+			allSteps = append(allSteps, comboSteps[i]...)
+			if comboFailed[i] {
 				conclusion = "failure"
-				if failFast {
-					stopStartingNew = true
-				}
 			}
 		}
 

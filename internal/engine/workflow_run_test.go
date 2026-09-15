@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"mirror-gha/internal/runner"
 )
@@ -25,6 +26,7 @@ func (alwaysSucceedBackend) StartJob(ctx context.Context, jobID string, hostWork
 type alwaysSucceedJob struct {
 	dir          string
 	workspaceDir string
+	sleep        time.Duration
 }
 
 func (j *alwaysSucceedJob) FilesRoot() string     { return j.dir }
@@ -33,6 +35,9 @@ func (j *alwaysSucceedJob) CopyToContainer(ctx context.Context, hostPath, contai
 	return nil
 }
 func (j *alwaysSucceedJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
+	if j.sleep > 0 {
+		time.Sleep(j.sleep)
+	}
 	return runner.StepResult{ExitCode: 0, Stdout: "ok\n"}, nil
 }
 func (j *alwaysSucceedJob) RunDockerAction(ctx context.Context, spec runner.DockerActionSpec) (runner.StepResult, error) {
@@ -40,6 +45,23 @@ func (j *alwaysSucceedJob) RunDockerAction(ctx context.Context, spec runner.Dock
 }
 func (j *alwaysSucceedJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
 func (j *alwaysSucceedJob) Platform() string               { return "linux" }
+
+// sleepySucceedBackend is alwaysSucceedBackend with a configurable sleep
+// per Exec call — used to prove real concurrent execution via wall-clock
+// timing (N combinations completing in much less than N x sleep time).
+type sleepySucceedBackend struct{ sleep time.Duration }
+
+func (b sleepySucceedBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *runner.ContainerSpec, services map[string]runner.ContainerSpec) (runner.Job, error) {
+	dir, err := os.MkdirTemp("", "fake-job-")
+	if err != nil {
+		return nil, err
+	}
+	return &alwaysSucceedJob{dir: dir, workspaceDir: hostWorkspaceDir, sleep: b.sleep}, nil
+}
+
+func sleepySucceedSelector(runsOn string) (runner.Backend, error) {
+	return sleepySucceedBackend{sleep: 150 * time.Millisecond}, nil
+}
 
 // alwaysFailBackend fails every step it executes.
 type alwaysFailBackend struct{}
@@ -159,6 +181,7 @@ func TestRunWorkflow_MatrixFailFastStopsRemainingCombinations(t *testing.T) {
 			"build": {
 				RunsOn: "ubuntu-latest",
 				Strategy: &Strategy{
+					MaxParallel: 1,
 					Matrix: map[string]interface{}{
 						"version": []interface{}{"1", "2", "3"},
 					},
@@ -241,4 +264,95 @@ func TestTopoSortJobs_UnknownNeedError(t *testing.T) {
 	if err == nil {
 		t.Fatal("TopoSortJobs() error = nil, want an unknown-job error")
 	}
+}
+
+func TestRunWorkflow_MatrixCombinationsRunConcurrently(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"build": {
+				RunsOn: "ubuntu-latest",
+				Strategy: &Strategy{
+					Matrix: map[string]interface{}{
+						"n": []interface{}{"1", "2", "3", "4"},
+					},
+				},
+				Steps: []Step{{ID: "s", Run: "sleep"}},
+			},
+		},
+	}
+
+	start := time.Now()
+	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunWorkflow() error = %v", err)
+	}
+	if result.Jobs["build"].Conclusion != "success" {
+		t.Fatalf("Conclusion = %q, want success", result.Jobs["build"].Conclusion)
+	}
+	// 4 combinations x 150ms each, default max-parallel 4 -> all run at
+	// once. A generous threshold (well under the 600ms strictly-sequential
+	// total) proves genuine concurrency without being timing-brittle.
+	if elapsed > 400*time.Millisecond {
+		t.Errorf("elapsed = %s, want well under 600ms (4x150ms sequential) — combinations should run concurrently", elapsed)
+	}
+}
+
+func TestRunWorkflow_ConcurrencyGroupSerializesSameGroupCombinations(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"build": {
+				RunsOn: "ubuntu-latest",
+				Strategy: &Strategy{
+					Matrix: map[string]interface{}{
+						"n": []interface{}{"1", "2", "3"},
+					},
+				},
+				Steps: []Step{{ID: "s", Run: "sleep"}},
+			},
+		},
+	}
+	wf.Jobs["build"] = setJobConcurrency(t, wf.Jobs["build"], "shared-group", false)
+
+	start := time.Now()
+	result, err := RunWorkflow(context.Background(), wf, sleepySucceedSelector, t.TempDir(), nil, nil, nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunWorkflow() error = %v", err)
+	}
+	if result.Jobs["build"].Conclusion != "success" {
+		t.Fatalf("Conclusion = %q, want success", result.Jobs["build"].Conclusion)
+	}
+	// All 3 combinations share one static concurrency: group, so despite
+	// max-parallel allowing all 3 at once, they must serialize to roughly
+	// 3x150ms sequential — proving the group actually blocked them.
+	if elapsed < 400*time.Millisecond {
+		t.Errorf("elapsed = %s, want at least ~450ms (3x150ms serialized by the shared concurrency: group)", elapsed)
+	}
+}
+
+// setJobConcurrency is a test helper that parses a minimal workflow just
+// to get a real RawConcurrency yaml.Node for the given group/
+// cancel-in-progress values, then copies that node onto job — there's no
+// public constructor for ConcurrencySpec's underlying yaml.Node, matching
+// how container:/environment: dual-shape fields are already exercised via
+// real YAML parsing elsewhere in this test file rather than hand-built.
+func setJobConcurrency(t *testing.T, job Job, group string, cancelInProgress bool) Job {
+	t.Helper()
+	doc := "name: t\non: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    concurrency:\n      group: " + group + "\n      cancel-in-progress: " + boolStr(cancelInProgress) + "\n    steps: []\n"
+	wf, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job.RawConcurrency = wf.Jobs["x"].RawConcurrency
+	return job
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
