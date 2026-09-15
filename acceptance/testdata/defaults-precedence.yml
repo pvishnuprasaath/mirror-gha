@@ -1,0 +1,13 @@
+name: defaults precedence (real)
+on: push
+defaults:
+  run:
+    shell: sh
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: 'echo "bash_version=$BASH_VERSION"'

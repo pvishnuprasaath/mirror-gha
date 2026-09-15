@@ -1,0 +1,8 @@
+name: timeout minutes (real)
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0.02
+    steps:
+      - run: sleep 30 && echo "should never print"
