@@ -107,6 +107,38 @@ func decodePermissions(node yaml.Node) (*PermissionsSpec, error) {
 	}
 }
 
+// ConcurrencySpec is a workflow's or job's `concurrency:` field — either
+// a bare group-name string (CancelInProgress defaults false) or a mapping
+// with group/cancel-in-progress. The group string may itself contain
+// ${{ }} expressions (e.g. referencing matrix.*) — resolving those is the
+// caller's job (see RunWorkflow's per-combination evaluation), not this
+// type's; this only carries the raw, possibly-templated string.
+type ConcurrencySpec struct {
+	Group            string `yaml:"group"`
+	CancelInProgress bool   `yaml:"cancel-in-progress"`
+}
+
+func decodeConcurrency(node yaml.Node) (*ConcurrencySpec, error) {
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.ScalarNode:
+		var group string
+		if err := node.Decode(&group); err != nil {
+			return nil, fmt.Errorf("concurrency: %w", err)
+		}
+		return &ConcurrencySpec{Group: group}, nil
+	case yaml.MappingNode:
+		spec := &ConcurrencySpec{}
+		if err := node.Decode(spec); err != nil {
+			return nil, fmt.Errorf("concurrency: %w", err)
+		}
+		return spec, nil
+	default:
+		return nil, fmt.Errorf("concurrency: must be a string or a mapping")
+	}
+}
+
 // RunDefaults is the `run:` block inside a `defaults:` section.
 type RunDefaults struct {
 	Shell            string `yaml:"shell"`
@@ -132,12 +164,19 @@ type Job struct {
 	Services       map[string]ContainerSpec `yaml:"services"`
 	RawEnvironment yaml.Node                `yaml:"environment"`
 	RawPermissions yaml.Node                `yaml:"permissions"`
+	RawConcurrency yaml.Node                `yaml:"concurrency"`
 }
 
 // Permissions resolves the job's `permissions:` field. Returns nil, nil
 // when the job has no permissions: field at all.
 func (j *Job) Permissions() (*PermissionsSpec, error) {
 	return decodePermissions(j.RawPermissions)
+}
+
+// Concurrency resolves the job's `concurrency:` field. Returns nil, nil
+// when the job has no concurrency: field at all.
+func (j *Job) Concurrency() (*ConcurrencySpec, error) {
+	return decodeConcurrency(j.RawConcurrency)
 }
 
 // Environment resolves the job's `environment:` field, which GitHub
@@ -196,12 +235,22 @@ type Workflow struct {
 	Defaults       *Defaults         `yaml:"defaults"`
 	Jobs           map[string]Job    `yaml:"jobs"`
 	RawPermissions yaml.Node         `yaml:"permissions"`
+	RawConcurrency yaml.Node         `yaml:"concurrency"`
 }
 
 // Permissions resolves the workflow's top-level `permissions:` field.
 // Returns nil, nil when the workflow has no permissions: field at all.
 func (wf *Workflow) Permissions() (*PermissionsSpec, error) {
 	return decodePermissions(wf.RawPermissions)
+}
+
+// Concurrency resolves the workflow's top-level `concurrency:` field.
+// mirror-gha parses and validates it but treats it as an intentional
+// no-op: real GitHub Actions uses this to serialize/cancel separate
+// workflow RUNS sharing a group, a concept with no meaning in a tool
+// that only ever executes one run per invocation.
+func (wf *Workflow) Concurrency() (*ConcurrencySpec, error) {
+	return decodeConcurrency(wf.RawConcurrency)
 }
 
 // Parse parses raw GitHub Actions workflow YAML into a Workflow.

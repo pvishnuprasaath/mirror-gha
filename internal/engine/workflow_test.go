@@ -380,6 +380,93 @@ jobs:
 	}
 }
 
+func TestJob_Concurrency_Absent(t *testing.T) {
+	job := &Job{}
+	spec, err := job.Concurrency()
+	if err != nil {
+		t.Fatalf("Concurrency() error = %v", err)
+	}
+	if spec != nil {
+		t.Errorf("Concurrency() = %v, want nil for a job with no concurrency: field", spec)
+	}
+}
+
+func TestJob_Concurrency_BareString(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency: deploy-shared
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Concurrency()
+	if err != nil {
+		t.Fatalf("Concurrency() error = %v", err)
+	}
+	if spec == nil || spec.Group != "deploy-shared" || spec.CancelInProgress {
+		t.Fatalf("Concurrency() = %+v, want Group=deploy-shared CancelInProgress=false", spec)
+	}
+}
+
+func TestJob_Concurrency_Mapping(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ matrix.env }}
+      cancel-in-progress: true
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Concurrency()
+	if err != nil {
+		t.Fatalf("Concurrency() error = %v", err)
+	}
+	if spec == nil || spec.Group != "deploy-${{ matrix.env }}" || !spec.CancelInProgress {
+		t.Fatalf("Concurrency() = %+v, want Group=deploy-${{ matrix.env }} CancelInProgress=true", spec)
+	}
+}
+
+func TestWorkflow_Concurrency_BareString(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+concurrency: whole-run
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	spec, err := wf.Concurrency()
+	if err != nil {
+		t.Fatalf("Concurrency() error = %v", err)
+	}
+	if spec == nil || spec.Group != "whole-run" {
+		t.Fatalf("Concurrency() = %+v, want Group=whole-run", spec)
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty
