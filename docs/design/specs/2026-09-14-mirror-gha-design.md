@@ -1194,6 +1194,107 @@ fields for each of the six covered trigger types via `if:` conditions and
 `run:` step output, plus one run with a real user-supplied
 `--event-path` file confirming it overrides the synthetic default.
 
+## Real End-to-End Acceptance Test Suite
+
+**Scope:** a permanent, CI-enforced regression suite covering every
+feature mirror-gha currently claims to support in `docs/usage.md`
+(this project's own authoritative "what we built" contract) plus
+meaningful feature combinations, plus explicit pass/fail contracts for
+documented gaps. **Not** an attempt at exhaustive coverage of GitHub
+Actions' full official documentation surface — that surface is
+unbounded (dozens of trigger sub-filters, OIDC, deployment approval
+gates, every runner OS/version), and most of it is explicitly
+out-of-scope or not yet built. Testing features that don't exist isn't
+regression testing, it's a wishlist; this suite tests what mirror-gha
+actually promises, comprehensively, for real.
+
+**The gap this closes, confirmed by direct inspection, not assumed:**
+zero automated end-to-end coverage exists today. All ~20 files under
+`examples/workflows/` have only ever been run manually (`go run
+./cmd/mirror run <file>` during each sub-project's own "verify for real"
+step this session, or the one hardcoded `make run-example` target) —
+none are wired into `go test` or CI. Every existing automated test either
+exercises internal Go functions directly (unit tests) or, in
+`cmd/mirror/main_test.go`'s own small `TestRunCommand_EndToEnd`-style
+tests, calls `runCommand()` in-process against tiny inline fixtures — a
+real, but narrow, slice of end-to-end coverage that has never once run
+the actual documented example corpus.
+
+**Mechanism: black-box exec against the real compiled binary, not
+in-process function calls — a deliberate divergence from
+`cmd/mirror/main_test.go`'s existing pattern, for two reasons.** First,
+fidelity: a real user never calls `runCommand()` directly, they invoke
+`mirror run <file>` from a shell — shelling out via `os/exec` against the
+actual compiled artifact exercises real CLI flag parsing and the real
+process boundary, which an in-process call skips entirely. Second,
+safety: `runCommand()` writes output via the package-global `os.Stdout`/
+`os.Stderr`; capturing that in-process requires temporarily swapping
+those global file descriptors around each call, which cannot safely
+coexist with any test in the same package ever calling `t.Parallel()`
+(no test using this suite does today, but a black-box subprocess — where
+every test gets its own real, un-shared stdout/stderr pair — has no such
+constraint to accidentally violate later). This suite builds the real
+`mirror` binary exactly once per test run (shared across every test in
+the new package via `sync.Once`), then every test runs that same
+compiled artifact as a subprocess, capturing its real stdout, stderr, and
+exit code.
+
+**Three tiers, each testing something the others don't:**
+
+1. **Corpus smoke test.** Globs every file under `examples/workflows/`
+   automatically and runs each for real, asserting a `0` exit code (with
+   one documented exception: `macos-job.yml`, whose correct exit code is
+   host-OS-dependent — `0` on a Mac, a clear non-zero error everywhere
+   else — handled by its own dedicated, OS-aware test instead of the
+   generic loop). This tier is self-maintaining: a future new example
+   file is automatically covered with zero test-file changes, catching
+   "did a change silently break any documented example" regressions for
+   free as the corpus grows.
+2. **Feature scenario tests.** One test per feature area, each with a
+   purpose-built fixture and precise assertions on real output content
+   (not just exit codes) — the bulk of real coverage. Areas: triggers (all
+   six covered types plus default-resolution priority), matrix (cartesian
+   product, include/exclude, real concurrency proof, fail-fast
+   interaction), `needs:` job graphs (linear, diamond dependency, skip
+   propagation, output passing), actions (JS, `docker://`,
+   Dockerfile-based, nested composite, Marketplace, local path,
+   `--local-repository` override), cache (save in one real invocation,
+   restore in a second real invocation — proving actual persistence, not
+   simulated), artifacts (v3 and v4, upload in one job, download in
+   another, in the same run), workflow commands (`::group::`, `::error::`/
+   `::warning::`/`::notice::`, `::add-mask::` redaction, `::debug::`
+   gating), `GITHUB_TOKEN`/`secrets` context/`permissions:`,
+   `container:`/`services:`, the macOS host backend (skipped on non-Mac
+   CI, matching the project's own existing `requireDarwin` gating
+   convention), `environment:`, `timeout-minutes`, `continue-on-error`,
+   `defaults.run`.
+3. **Known-gap contracts.** Assert `windows-latest` returns a clear,
+   specific error (not a silent wrong result) — turning a documented
+   limitation into an enforced regression test, so an accidental future
+   change that makes it silently "succeed" with wrong behavior is caught
+   immediately, not discovered by a user. Assert `on: push: branches:`
+   is accepted (doesn't error) but doesn't filter — documenting today's
+   real behavior as an explicit, checked contract, so a future
+   *intentional* implementation of that filtering is a deliberate,
+   visible test change rather than an accidental silent behavior shift
+   nobody notices until a user reports it.
+
+**Wiring:** a new top-level `acceptance/` package (sibling to `cmd/`,
+`internal/`), folded into the existing `make test`/CI `go test ./...`
+sweep — CI already runs on `ubuntu-latest` with Docker available, so no
+new CI job is needed, only this new package joining the existing sweep.
+Every test that touches Docker keeps this project's existing
+`requireDocker(t)`-style skip-if-unavailable convention (duplicated
+per-package, matching `internal/runner`/`internal/actions`/
+`internal/engine`'s own existing precedent, not newly invented here).
+
+**Testing the test suite itself, briefly:** the harness's `run()`/
+`binary()` helpers are simple enough (subprocess exec + output capture)
+that they don't need their own separate unit tests — their correctness
+is proven by every scenario test that uses them actually passing for
+real against the genuine compiled binary, the same "verify for real"
+standard applied everywhere else in this project.
+
 ## Data flow
 
 ```
