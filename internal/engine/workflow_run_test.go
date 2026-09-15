@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -376,5 +377,92 @@ func TestRunWorkflow_ThreadsEventNameAndJSONToJobs(t *testing.T) {
 	}
 	if result.Jobs["a"].Conclusion != "success" {
 		t.Fatalf("Conclusion = %q, want success", result.Jobs["a"].Conclusion)
+	}
+}
+
+// matrixSelectiveFailBackend fails only the step whose (already
+// expression-substituted) Command matches failOn — used to
+// deterministically reproduce a specific matrix combination's real
+// failure without any timing dependency, unlike a wall-clock-based test.
+type matrixSelectiveFailBackend struct{ failOn string }
+
+func (b matrixSelectiveFailBackend) StartJob(ctx context.Context, jobID string, hostWorkspaceDir string, containerSpec *runner.ContainerSpec, services map[string]runner.ContainerSpec) (runner.Job, error) {
+	dir, err := os.MkdirTemp("", "fake-job-")
+	if err != nil {
+		return nil, err
+	}
+	return &matrixSelectiveFailJob{dir: dir, workspaceDir: hostWorkspaceDir, failOn: b.failOn}, nil
+}
+
+type matrixSelectiveFailJob struct {
+	dir          string
+	workspaceDir string
+	failOn       string
+}
+
+func (j *matrixSelectiveFailJob) FilesRoot() string     { return j.dir }
+func (j *matrixSelectiveFailJob) WorkspacePath() string { return j.workspaceDir }
+func (j *matrixSelectiveFailJob) CopyToContainer(ctx context.Context, hostPath, containerPath string) error {
+	return nil
+}
+func (j *matrixSelectiveFailJob) Exec(ctx context.Context, spec runner.StepSpec) (runner.StepResult, error) {
+	if spec.Command == j.failOn {
+		return runner.StepResult{ExitCode: 1}, nil
+	}
+	return runner.StepResult{ExitCode: 0, Stdout: spec.Command + " ran\n"}, nil
+}
+func (j *matrixSelectiveFailJob) RunDockerAction(ctx context.Context, spec runner.DockerActionSpec) (runner.StepResult, error) {
+	return runner.StepResult{ExitCode: 0}, nil
+}
+func (j *matrixSelectiveFailJob) Stop(ctx context.Context) error { return os.RemoveAll(j.dir) }
+func (j *matrixSelectiveFailJob) Platform() string               { return "linux" }
+
+// TestRunWorkflow_MatrixFailFastSkipsAllLaterCombinationsInOrder is a
+// regression test for a real bug found via this project's own real-Docker
+// acceptance suite: with max-parallel: 1, combination 3 actually ran to
+// completion while combination 2 was (correctly) skipped after
+// combination 1's real failure — the un-ordered semaphore race let a
+// later combination win a freed slot before an earlier one got its turn.
+func TestRunWorkflow_MatrixFailFastSkipsAllLaterCombinationsInOrder(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Jobs: map[string]Job{
+			"build": {
+				RunsOn: "ubuntu-latest",
+				Strategy: &Strategy{
+					MaxParallel: 1,
+					Matrix: map[string]interface{}{
+						"n": []interface{}{"1", "2", "3"},
+					},
+				},
+				Steps: []Step{{ID: "s", Run: "${{ matrix.n }}"}},
+			},
+		},
+	}
+
+	selector := func(runsOn string) (runner.Backend, error) {
+		return matrixSelectiveFailBackend{failOn: "1"}, nil
+	}
+
+	result, err := RunWorkflow(context.Background(), wf, selector, t.TempDir(), nil, nil, nil, "push", "")
+	if err != nil {
+		t.Fatalf("RunWorkflow() error = %v", err)
+	}
+	if result.Jobs["build"].Conclusion != "failure" {
+		t.Fatalf("Conclusion = %q, want failure", result.Jobs["build"].Conclusion)
+	}
+
+	var skipped int
+	for _, s := range result.Jobs["build"].Steps {
+		if s.Conclusion == "skipped" {
+			skipped++
+			continue
+		}
+		if strings.Contains(s.Stdout, "2 ran") || strings.Contains(s.Stdout, "3 ran") {
+			t.Errorf("a later combination actually ran: %q — max-parallel: 1 fail-fast must skip ALL combinations after the first failure, not just some of them out of order", s.Stdout)
+		}
+	}
+	if skipped != 2 {
+		t.Errorf("skipped count = %d, want exactly 2 (combinations n=2 and n=3)", skipped)
 	}
 }

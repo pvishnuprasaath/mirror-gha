@@ -104,11 +104,36 @@ func RunWorkflow(ctx context.Context, wf *Workflow, selectBackend BackendSelecto
 		sem := make(chan struct{}, maxParallel)
 		var wg sync.WaitGroup
 
+		// starts[i] is closed once combination i has acquired its
+		// semaphore slot — combination i+1 waits on it before even
+		// attempting to acquire its own slot. This is load-bearing, not
+		// cosmetic: without it, when maxParallel forces blocking (e.g.
+		// max-parallel: 1), multiple goroutines race the semaphore
+		// channel with no ordering guarantee, so a later combination can
+		// win a freed slot before an earlier one — found for real via
+		// this project's own acceptance suite, where combination 3 ran
+		// to completion while combination 2 was (correctly) skipped after
+		// combination 1's real failure. Chaining acquisition attempts in
+		// index order fixes this while still preserving full concurrency
+		// when maxParallel is large enough for every attempt to succeed
+		// immediately (each combination signals the next the instant it
+		// acquires, not after it finishes running).
+		starts := make([]chan struct{}, len(combos))
+		for i := range starts {
+			starts[i] = make(chan struct{})
+		}
+
 		for i, combo := range combos {
 			wg.Add(1)
 			go func(i int, combo MatrixCombination) {
 				defer wg.Done()
+				if i > 0 {
+					<-starts[i-1]
+				}
 				sem <- struct{}{}
+				if i+1 < len(combos) {
+					close(starts[i])
+				}
 				defer func() { <-sem }()
 
 				mu.Lock()
