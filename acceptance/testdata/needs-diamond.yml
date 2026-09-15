@@ -1,0 +1,25 @@
+name: needs diamond dependency
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    outputs:
+      val: ${{ steps.s.outputs.val }}
+    steps:
+      - id: s
+        run: echo "val=from-a" >> "$GITHUB_OUTPUT"
+  b:
+    runs-on: ubuntu-latest
+    needs: a
+    steps:
+      - run: echo "b saw ${{ needs.a.outputs.val }}"
+  c:
+    runs-on: ubuntu-latest
+    needs: a
+    steps:
+      - run: echo "c saw ${{ needs.a.outputs.val }}"
+  d:
+    runs-on: ubuntu-latest
+    needs: [b, c]
+    steps:
+      - run: echo "d running after b and c"
