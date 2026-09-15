@@ -84,9 +84,14 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   default-value pattern the same way it does on GitHub. Built-in
   functions: `success()`, `failure()`, `always()`, `cancelled()`,
   `contains()`, `startsWith()`, `endsWith()`, `format()`, `join()`,
-  `toJSON()`, `fromJSON()`. `hashFiles()` isn't implemented yet (a real
-  workspace exists now, so nothing blocks it — it just hasn't been built)
-  and returns a clear error rather than a wrong result.
+  `toJSON()`, `fromJSON()`, `hashFiles()` — a real SHA-256-over-matched-
+  files implementation (single hash over sorted matched files'
+  concatenated contents, matching act's own pure-Go algorithm), with a
+  hand-rolled doublestar glob matcher (`*`, `?`, `**` across directory
+  segments) covering the common real-world patterns
+  (`hashFiles('**/package-lock.json')`) — no `!` negation or brace
+  expansion yet, a documented gap versus the real `@actions/glob`
+  library, not a silent wrong result.
 - **`if:` conditions** — a step whose condition evaluates false is
   reported as `skipped`, not silently dropped.
 - **`continue-on-error: true`** — a failing step doesn't stop the job.
@@ -221,6 +226,31 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   `main` only restores; the actual save happens in `post`). Nested
   `uses:` steps inside a composite action don't get their own post
   actions run yet — a documented, accepted scope limit.
+- **`environment:`** — parsed as either a bare name or a `{name, url}`
+  mapping, exposed as `github.environment`. Name only — no approval gate
+  and no environment-scoped secrets/vars store, a documented v1 scope
+  limit (there's no environment-secrets concept locally to scope against).
+- **`permissions:`** (workflow- and job-level, bare `read-all`/`write-all`
+  or a scope map) — parsed and validated, but shim-only: there's no real
+  GitHub API surface running locally for it to actually restrict. Every
+  step gets a `GITHUB_TOKEN` env var (a plain placeholder string, not
+  JWT-shaped — real ones aren't either) so actions reading
+  `process.env.GITHUB_TOKEN` directly don't crash on it being missing,
+  plus a minimal `secrets` context exposing `secrets.GITHUB_TOKEN` for
+  `with:` blocks that reference it that way instead.
+- **Workflow commands beyond `::set-output`**: `::group::`/`::endgroup::`
+  render as a plain-terminal fold marker (`▶ <title>`, no raw passthrough —
+  there's no foldable UI locally to match GitHub's own log rendering).
+  `::error::`/`::warning::`/`::notice::` render with a labeled marker and
+  have zero effect on the step's exit code, matching real GitHub Actions
+  (the step's own exit code is what fails it). `::add-mask::` registers a
+  value at runtime, redacted (case-sensitive literal substring replace)
+  from the step that registered it and every subsequent step's output in
+  the same job — a real per-job mask registry, not just a display trick.
+  `::debug::` lines are hidden by default and only shown with `mirror run
+  --debug`, which also exports `ACTIONS_STEP_DEBUG=true` to steps —
+  matching real GitHub Actions' own default-hidden debug logging (act
+  itself doesn't gate this at all).
 
 See [`examples/`](../examples/) for a runnable demonstration of each of
 these.

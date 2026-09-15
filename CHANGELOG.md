@@ -9,6 +9,38 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **`hashFiles()`, `environment:`, `permissions:`/`GITHUB_TOKEN`, and
+  workflow commands beyond `::set-output`.** Four independent, bounded
+  gaps closed from a real-vs-documented audit of the Phase 1 spec
+  (`docs/design/specs/2026-09-14-mirror-gha-design.md`'s feature-parity
+  matrix), each verified against real source before implementation:
+  `hashFiles()` (act's `pkg/exprparser/functions.go`) is a single
+  SHA-256 over sorted matched files' concatenated contents, with a
+  hand-rolled doublestar glob matcher (`*`/`?`/`**`, no `!`/brace
+  expansion — a documented gap versus `@actions/glob`); `environment:`
+  parses bare-name-or-`{name,url}` and exposes only the name via
+  `github.environment` (no approval gate, no environment-scoped
+  secrets/vars); `permissions:` parses and validates but doesn't enforce
+  (shim only — no real GitHub API surface exists locally to restrict),
+  paired with a mocked `GITHUB_TOKEN` env var (plain placeholder, not
+  JWT-shaped) and a minimal `secrets` context so real actions reading
+  either mechanism don't crash on a missing token; workflow commands
+  `::group::`/`::endgroup::`, `::error::`/`::warning::`/`::notice::`,
+  `::add-mask::`, and `ACTIONS_STEP_DEBUG` (checked against act's
+  `pkg/runner/command.go`/`logger.go` — act itself only implements
+  `::add-mask::` for real, treats `::group::` as pure unrendered
+  passthrough, has no `::notice::` at all, and never gates `::debug::`
+  behind `ACTIONS_STEP_DEBUG` the way real GitHub Actions does, so
+  mirror-gha is more correct than act on two of these four).
+  `::add-mask::` redaction is a real per-job mask registry (case-sensitive
+  literal substring replace), not just a display trick — it redacts the
+  registering step's own remaining output and every subsequent step's in
+  the same job, propagated into composite actions too. Verified for real:
+  a workflow exercising every one of these together (`::group::` folding,
+  masked-token redaction across two steps, error/warning/notice
+  rendering with the step still reporting `success`, `--debug`
+  correctly toggling `::debug::` visibility) produced exactly the
+  expected output with no bugs found during verification.
 - **`runs-on: macos-latest`/`macos-13`/`macos-14`/`macos-15` (macOS host
   backend).** Checked against act's own host-execution mode
   (`pkg/container/host_environment.go`, `pkg/runner/run_context.go`)
