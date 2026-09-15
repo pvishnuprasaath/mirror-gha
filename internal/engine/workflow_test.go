@@ -467,6 +467,72 @@ jobs:
 	}
 }
 
+func TestWorkflow_OnEventNames_BareString(t *testing.T) {
+	wf := &Workflow{On: "push"}
+	names, err := wf.OnEventNames()
+	if err != nil {
+		t.Fatalf("OnEventNames() error = %v", err)
+	}
+	if len(names) != 1 || names[0] != "push" {
+		t.Fatalf("OnEventNames() = %v, want [push]", names)
+	}
+}
+
+func TestWorkflow_OnEventNames_List(t *testing.T) {
+	wf := &Workflow{On: []interface{}{"push", "pull_request"}}
+	names, err := wf.OnEventNames()
+	if err != nil {
+		t.Fatalf("OnEventNames() error = %v", err)
+	}
+	if len(names) != 2 || names[0] != "push" || names[1] != "pull_request" {
+		t.Fatalf("OnEventNames() = %v, want [push pull_request]", names)
+	}
+}
+
+func TestWorkflow_OnEventNames_Mapping(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	names, err := wf.OnEventNames()
+	if err != nil {
+		t.Fatalf("OnEventNames() error = %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("OnEventNames() = %v, want 2 entries", names)
+	}
+	found := map[string]bool{}
+	for _, n := range names {
+		found[n] = true
+	}
+	if !found["push"] || !found["workflow_dispatch"] {
+		t.Fatalf("OnEventNames() = %v, want to contain push and workflow_dispatch", names)
+	}
+}
+
+func TestWorkflow_OnEventNames_Nil(t *testing.T) {
+	wf := &Workflow{}
+	names, err := wf.OnEventNames()
+	if err != nil {
+		t.Fatalf("OnEventNames() error = %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("OnEventNames() = %v, want empty", names)
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty

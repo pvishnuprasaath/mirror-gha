@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -251,6 +252,40 @@ func (wf *Workflow) Permissions() (*PermissionsSpec, error) {
 // that only ever executes one run per invocation.
 func (wf *Workflow) Concurrency() (*ConcurrencySpec, error) {
 	return decodeConcurrency(wf.RawConcurrency)
+}
+
+// OnEventNames extracts the trigger names from the workflow's on: field,
+// which GitHub Actions allows as a bare string, a list of strings, or a
+// mapping (keys are the trigger names, values are each trigger's own
+// sub-config — e.g. branches/paths filters, which mirror-gha doesn't
+// evaluate, matching act's own choice not to either). Returns an empty
+// slice, not an error, for a workflow with no on: field at all.
+func (wf *Workflow) OnEventNames() ([]string, error) {
+	switch v := wf.On.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return []string{v}, nil
+	case []interface{}:
+		names := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("on: list entries must be strings, got %T", item)
+			}
+			names = append(names, s)
+		}
+		return names, nil
+	case map[string]interface{}:
+		names := make([]string, 0, len(v))
+		for k := range v {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		return names, nil
+	default:
+		return nil, fmt.Errorf("on: must be a string, a list, or a mapping, got %T", wf.On)
+	}
 }
 
 // Parse parses raw GitHub Actions workflow YAML into a Workflow.
