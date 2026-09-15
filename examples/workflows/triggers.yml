@@ -1,0 +1,23 @@
+# Demonstrates github.event_name/github.event/GITHUB_EVENT_NAME/
+# GITHUB_EVENT_PATH — real for a user-supplied --event-path, synthetic
+# (but structurally real) by default otherwise.
+#
+# Try it (synthetic pull_request payload):
+#   mirror run --event-name pull_request examples/workflows/triggers.yml
+#
+# Try it (real user-supplied payload):
+#   mirror run --event-name pull_request --event-path examples/event-payloads/custom-pull-request.json examples/workflows/triggers.yml
+name: triggers
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: report event context
+        run: |
+          echo "event_name=$GITHUB_EVENT_NAME"
+          echo "event_path=$GITHUB_EVENT_PATH"
+          cat "$GITHUB_EVENT_PATH"
+      - name: report pull_request fields via expressions
+        if: github.event_name == 'pull_request'
+        run: 'echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }} (${{ github.event.pull_request.head.ref }} -> ${{ github.event.pull_request.base.ref }})"'

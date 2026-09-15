@@ -1,0 +1,10 @@
+{
+  "action": "opened",
+  "number": 99,
+  "pull_request": {
+    "number": 99,
+    "title": "A real custom payload overriding the synthetic default",
+    "head": {"ref": "my-feature", "sha": "abc123"},
+    "base": {"ref": "main", "sha": "def456"}
+  }
+}

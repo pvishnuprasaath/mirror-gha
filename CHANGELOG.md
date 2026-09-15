@@ -9,6 +9,35 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **Real triggers and event payloads.** Checked against act's actual
+  event-loading mechanism (`pkg/runner/runner.go`'s `configure()`,
+  `pkg/model/github_context.go`, `cmd/root.go`'s event-name resolution)
+  rather than guessed: `--event-path <file>` loads a real user-supplied
+  JSON payload exactly like act's own `-e`/`--eventpath` flag;
+  `--event-name <name>` selects `github.event_name` via the same
+  priority chain act uses (explicit flag, else the workflow's own single
+  `on:` trigger, else `"push"`). Beyond what act itself does (confirmed
+  via source: act never fabricates a payload for any event, always
+  falling back to a bare `{}`), mirror-gha also ships synthetic but
+  structurally real default payloads (matching GitHub's own public
+  webhook documentation, since there's no single "correct" fake payload
+  and act has no reference implementation for this at all) for `push`,
+  `pull_request`, `workflow_dispatch`, `workflow_call`,
+  `repository_dispatch`, and `workflow_run`. `github.event.*` gained
+  genuine arbitrary-depth expression resolution
+  (`github.event.pull_request.head.ref`) — the previous `github.*`
+  context lookup only ever handled flat two-segment paths. No `on:
+  push/pull_request` branches/paths/types filtering — matches act's own
+  choice (confirmed dead, unwired pattern-matching code even in act's
+  own source) and is inherently moot once a user has already explicitly
+  invoked a local run; the job's own `if:` conditions remain the
+  mechanism that matters locally. Verified for real: the exact same
+  workflow run three ways — no flags (defaults to the synthetic `push`
+  payload), `--event-name pull_request` (synthetic pull_request payload,
+  real `github.event.pull_request.*` field access via `if:`/`run:`), and
+  `--event-name pull_request --event-path <real file>` (confirming the
+  real file's values override the synthetic default end-to-end, not just
+  in isolated unit tests).
 - **Real concurrent matrix execution and `concurrency:` groups.** Checked
   against act's own job/matrix scheduler (`pkg/runner/runner.go`'s
   `NewPlanExecutor`, `pkg/common/executor.go`'s `NewParallelExecutor`)

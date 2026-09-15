@@ -172,6 +172,25 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   name (which may reference `matrix.*`) coincides — a real gap in act
   itself (confirmed via source: the field doesn't exist there at all),
   so this is mirror-gha's own design rather than a port.
+- **`github.event_name`/`github.event`/`GITHUB_EVENT_NAME`/
+  `GITHUB_EVENT_PATH`** — real for a user-supplied `--event-path <file>`
+  (loaded verbatim, matching act's own mechanism exactly); otherwise a
+  synthetic but structurally real default payload (matching GitHub's own
+  public webhook-payload shapes) for `push`, `pull_request`,
+  `workflow_dispatch`, `workflow_call`, `repository_dispatch`, and
+  `workflow_run` — any other trigger name defaults to `{}`, matching
+  act's own default for the untyped case (act itself never fabricates a
+  payload for any event, confirmed via source). `--event-name <name>`
+  selects `github.event_name`; without it, the workflow's own `on:`
+  block picks it when it names exactly one trigger, else it defaults to
+  `"push"` — the same priority chain act uses. `github.event.*` supports
+  arbitrary-depth expressions (`github.event.pull_request.head.ref`),
+  not just the top-level fields. No `on: push: branches/paths` or
+  `pull_request: types` filtering — matches act's own choice (dead,
+  unwired code for this exists even in act's own source), and is
+  inherently moot once a user has explicitly invoked a local run; the
+  job's own `if:` conditions are the mechanism that still matters
+  locally.
 - **`container:` and `services:` job fields** — `container:` swaps the
   image the job's own container runs as (bare image string or a mapping
   with `env`/`ports`/`volumes`/`options`/`credentials`); `services:`
