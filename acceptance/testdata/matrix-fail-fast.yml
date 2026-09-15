@@ -1,0 +1,11 @@
+name: matrix fail-fast (real)
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        n: ["1", "2", "3"]
+    steps:
+      - run: 'if [ "${{ matrix.n }}" = "1" ]; then exit 1; else echo "combo ${{ matrix.n }} ran"; fi'
