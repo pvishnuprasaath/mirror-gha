@@ -153,6 +153,25 @@ step, matching real GitHub Actions rather than a fresh sandbox each time.
   whose axis-key subset already matches, or — if it matches nothing —
   becomes its own standalone combination. A matrix with only `include`
   and no axes treats each include entry as one full combination directly.
+- **Real concurrent matrix execution** — a job's matrix combinations run
+  concurrently, bounded by `strategy.max-parallel` (default 4 when
+  unset, further capped by the actual combination count — matching
+  act's own considered default, chosen to respect a single local Docker
+  daemon's real resource limits rather than GitHub's own effectively
+  unbounded cloud-runner default). Independent jobs (no shared `needs:`)
+  still run sequentially — real GitHub Actions has no equivalent
+  parallelism knob for jobs either, only for matrix combinations, so
+  this isn't a gap. Fail-fast stops *starting* new combinations after a
+  failure but doesn't cancel ones already running, extending mirror-gha's
+  existing "skip not-yet-started, don't abort in-flight" semantic from
+  steps to combinations. `concurrency:` (job-level; workflow-level is
+  parsed but an intentional no-op — it exists in real GitHub Actions to
+  serialize separate workflow *runs*, a concept with no meaning in a
+  tool that only ever executes one run per invocation) serializes or
+  cancels-in-progress combinations of the same job whose evaluated group
+  name (which may reference `matrix.*`) coincides — a real gap in act
+  itself (confirmed via source: the field doesn't exist there at all),
+  so this is mirror-gha's own design rather than a port.
 - **`container:` and `services:` job fields** — `container:` swaps the
   image the job's own container runs as (bare image string or a mapping
   with `env`/`ports`/`volumes`/`options`/`credentials`); `services:`

@@ -9,6 +9,37 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **Real concurrent matrix execution and `concurrency:` groups.** Checked
+  against act's own job/matrix scheduler (`pkg/runner/runner.go`'s
+  `NewPlanExecutor`, `pkg/common/executor.go`'s `NewParallelExecutor`)
+  rather than guessed, with two deliberate corrections: act has a genuine
+  unguarded data race on matrix combinations of the same job (every
+  combination shares one `*model.Job` pointer, mutated concurrently with
+  zero mutex) — mirror-gha instead computes each combination's result
+  fully independently and merges under a mutex only after all finish.
+  act's own default max-parallel-when-unset (4, chosen to respect local
+  resource limits rather than GitHub's effectively unbounded cloud
+  default) is adopted directly, since mirror-gha shares that same
+  local-Docker-daemon constraint. `concurrency:` doesn't exist in act at
+  all (confirmed via source, zero hits) — this is mirror-gha's own
+  design: job-level groups (evaluated per matrix combination, since the
+  group name may reference `matrix.*`) serialize via a blocking queue, or
+  cancel-in-progress via a generation-counted per-group cancellation to
+  avoid a real correctness hazard (a delayed release from an
+  already-superseded holder incorrectly clearing a newer holder's
+  state) a naive one-cancel-func-per-group implementation would hit.
+  Workflow-level `concurrency:` is parsed but an intentional no-op — it
+  serializes separate workflow *runs* in real GitHub Actions, a concept
+  with no meaning in a single-run-per-invocation tool. Scope corrected
+  from the original ask during design: `max-parallel` only ever governs
+  matrix combinations, never independent jobs — real GitHub Actions has
+  no job-level parallelism knob either, so jobs stay sequential, matching
+  reality rather than leaving a gap. Verified for real: a 3-combination
+  matrix with `max-parallel: 3`, each sleeping 2 real seconds, completes
+  in ~3.6 seconds wall-clock including Docker container startup overhead
+  (confirmed via `docker ps` showing all 3 job containers genuinely
+  running simultaneously mid-run), not the ~6+ seconds strictly
+  sequential execution would take.
 - **`hashFiles()`, `environment:`, `permissions:`/`GITHUB_TOKEN`, and
   workflow commands beyond `::set-output`.** Four independent, bounded
   gaps closed from a real-vs-documented audit of the Phase 1 spec

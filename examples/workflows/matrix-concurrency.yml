@@ -1,0 +1,17 @@
+# Demonstrates real concurrent matrix execution (strategy.max-parallel)
+# and concurrency: group serialization within one job's matrix.
+#
+# Try it:
+#   time mirror run examples/workflows/matrix-concurrency.yml
+name: matrix concurrency
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 3
+      matrix:
+        version: ["1", "2", "3"]
+    steps:
+      - name: simulate real work
+        run: sleep 2 && echo "combination ${{ matrix.version }} done"
