@@ -66,6 +66,15 @@ type ContainerSpec struct {
 	Credentials map[string]string `yaml:"credentials"`
 }
 
+// EnvironmentSpec is a job's `environment:` field. mirror-gha exposes only
+// the name (as github.environment) — no approval gate and no
+// environment-scoped secrets/vars store exist locally, matching this
+// project's documented v1 scope for this field.
+type EnvironmentSpec struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
+}
+
 // RunDefaults is the `run:` block inside a `defaults:` section.
 type RunDefaults struct {
 	Shell            string `yaml:"shell"`
@@ -89,6 +98,32 @@ type Job struct {
 	Defaults       *Defaults                `yaml:"defaults"`
 	RawContainer   yaml.Node                `yaml:"container"`
 	Services       map[string]ContainerSpec `yaml:"services"`
+	RawEnvironment yaml.Node                `yaml:"environment"`
+}
+
+// Environment resolves the job's `environment:` field, which GitHub
+// Actions allows as either a bare environment-name string or a mapping
+// with name/url. Returns nil, nil when the job has no environment: field
+// at all.
+func (j *Job) Environment() (*EnvironmentSpec, error) {
+	switch j.RawEnvironment.Kind {
+	case 0:
+		return nil, nil
+	case yaml.ScalarNode:
+		var name string
+		if err := j.RawEnvironment.Decode(&name); err != nil {
+			return nil, fmt.Errorf("environment: %w", err)
+		}
+		return &EnvironmentSpec{Name: name}, nil
+	case yaml.MappingNode:
+		spec := &EnvironmentSpec{}
+		if err := j.RawEnvironment.Decode(spec); err != nil {
+			return nil, fmt.Errorf("environment: %w", err)
+		}
+		return spec, nil
+	default:
+		return nil, fmt.Errorf("environment: must be a string or a mapping")
+	}
 }
 
 // Container resolves the job's `container:` field, which GitHub Actions

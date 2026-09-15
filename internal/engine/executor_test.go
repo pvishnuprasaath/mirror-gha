@@ -599,3 +599,36 @@ func TestToRunnerContainerSpec_InvalidCredentialsError(t *testing.T) {
 		t.Fatal("toRunnerContainerSpec() error = nil, want error for malformed credentials")
 	}
 }
+
+func TestRunJob_ExposesEnvironmentName(t *testing.T) {
+	wf, err := Parse([]byte(`
+name: t
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - id: s
+        run: echo hi
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["deploy"]
+
+	backend := &fakeBackend{results: []runner.StepResult{{ExitCode: 0}}}
+	_, err = RunJob(context.Background(), wf, &job, backend, JobRunOptions{
+		WorkspaceDir: t.TempDir(),
+		JobID:        "deploy",
+	})
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if backend.lastJob == nil || len(backend.lastJob.execSpecs) != 1 {
+		t.Fatalf("execSpecs = %v, want exactly 1 step executed", backend.lastJob)
+	}
+	if got := backend.lastJob.execSpecs[0].Env["GITHUB_ENVIRONMENT"]; got != "production" {
+		t.Errorf(`step Env["GITHUB_ENVIRONMENT"] = %q, want "production"`, got)
+	}
+}

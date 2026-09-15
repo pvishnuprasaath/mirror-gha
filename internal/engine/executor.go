@@ -108,6 +108,14 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	}
 	result := &JobResult{Conclusion: "success"}
 
+	environmentSpec, err := job.Environment()
+	if err != nil {
+		return nil, fmt.Errorf("job environment: %w", err)
+	}
+	if environmentSpec != nil {
+		actx.GitHub["environment"] = environmentSpec.Name
+	}
+
 	containerSpec, err := job.Container()
 	if err != nil {
 		return nil, fmt.Errorf("job container: %w", err)

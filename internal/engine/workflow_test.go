@@ -230,6 +230,69 @@ jobs:
 	}
 }
 
+func TestJob_Environment_Absent(t *testing.T) {
+	job := &Job{}
+	spec, err := job.Environment()
+	if err != nil {
+		t.Fatalf("Environment() error = %v", err)
+	}
+	if spec != nil {
+		t.Errorf("Environment() = %v, want nil for a job with no environment: field", spec)
+	}
+}
+
+func TestJob_Environment_BareName(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Environment()
+	if err != nil {
+		t.Fatalf("Environment() error = %v", err)
+	}
+	if spec == nil || spec.Name != "production" {
+		t.Fatalf("Environment() = %+v, want Name=production", spec)
+	}
+}
+
+func TestJob_Environment_Mapping(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://example.com
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Environment()
+	if err != nil {
+		t.Fatalf("Environment() error = %v", err)
+	}
+	if spec == nil || spec.Name != "production" || spec.URL != "https://example.com" {
+		t.Fatalf("Environment() = %+v, want Name=production URL=https://example.com", spec)
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty
