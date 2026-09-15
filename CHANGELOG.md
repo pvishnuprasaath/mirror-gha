@@ -9,6 +9,45 @@ Unreleased until the first `v0.1.0`.
 
 ### Added
 
+- **Real end-to-end acceptance test suite (`acceptance/`).** Closes a
+  confirmed, complete gap: every one of the ~20 files under
+  `examples/workflows/` had only ever been run manually all session —
+  zero automated coverage existed. Every test shells out to the real,
+  compiled `mirror` binary via `os/exec` (never calling internal Go
+  functions directly) — a deliberate choice over extending
+  `cmd/mirror/main_test.go`'s existing in-process pattern, both for
+  fidelity (exercises real CLI flag parsing and the real process
+  boundary) and safety (each subprocess gets its own real stdout/stderr,
+  no fragile global-file-descriptor swapping). Three tiers: a
+  self-maintaining corpus smoke test (globs `examples/workflows/*.yml`
+  automatically — a future new example is covered with zero test
+  changes), detailed feature-scenario tests with precise output
+  assertions across triggers, matrix (cartesian/include-exclude/real
+  concurrency/fail-fast), `needs:` job graphs (including diamond
+  dependency), every action type, cache (two real sequential
+  invocations proving genuine cross-run persistence), artifacts v3/v4,
+  every workflow command, `GITHUB_TOKEN`/`secrets`/`permissions`/
+  `environment:`, `container:`/`services:`, the macOS backend,
+  `timeout-minutes`, `defaults.run`, and `continue-on-error`, and
+  known-gap contracts (Windows returns a clear error; `branches:`/
+  `paths:` filters are accepted but not enforced, documented as an
+  explicit checked contract rather than a silent accident). Folds into
+  the existing `make test`/CI `go test ./...` sweep — no new CI job
+  needed. Found and fixed two real bugs along the way, exactly the
+  point of building this suite: (1) a genuine matrix-concurrency
+  ordering bug — with `max-parallel: 1`, a later combination could win
+  a freed semaphore slot before an earlier one got its turn, so
+  fail-fast's "skip not-yet-started combinations" sometimes skipped the
+  wrong ones out of order; fixed by chaining semaphore-acquisition
+  attempts in strict combination-index order, with its own deterministic
+  regression test in `internal/engine`. (2) A small stale-documentation
+  bug: `ErrUnsupportedRunner`'s error message still said "only
+  ubuntu-latest/ubuntu-22.04/ubuntu-24.04 run today," inaccurate since
+  the macOS host backend shipped after that message was originally
+  written. Also confirmed, for the first time against real Docker
+  (previously only verified against fake backends), that
+  `timeout-minutes` genuinely kills a long-running step's real
+  subprocess rather than merely giving up waiting on it.
 - **Real triggers and event payloads.** Checked against act's actual
   event-loading mechanism (`pkg/runner/runner.go`'s `configure()`,
   `pkg/model/github_context.go`, `cmd/root.go`'s event-name resolution)

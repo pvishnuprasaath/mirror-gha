@@ -1,0 +1,9 @@
+name: branches filter behavior
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "ran despite an on: push: branches: filter — mirror-gha does not evaluate these, matching acts own choice"'

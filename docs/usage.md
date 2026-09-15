@@ -310,6 +310,19 @@ workflow feature not yet wired up produces an explicit error, not a
 false pass. See the [design spec's phased feature-parity matrix](design/specs/2026-09-14-mirror-gha-design.md#phased-feature-parity-matrix)
 for the order these are being built in.
 
+## Testing this project itself
+
+`acceptance/` is a real, CI-enforced end-to-end regression suite — every
+test shells out to the actual compiled `mirror` binary (never calling
+internal Go functions directly) and asserts on real output from real
+Docker containers, real network fetches, and real cache/artifact
+servers. It covers every feature in "What's supported today" above,
+runs automatically as part of `go test ./...` (and therefore in CI on
+every push/PR), and is intentionally self-maintaining for the corpus
+smoke test tier: a new file added to `examples/workflows/` is
+automatically covered with no test-file changes needed. Run it alone
+during development with `make test-acceptance`.
+
 ## Best practices while this is early
 
 - **Don't treat a local pass as a guarantee.** `mirror` currently runs

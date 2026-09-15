@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt fmt-check install run-example clean
+.PHONY: build test test-acceptance vet fmt fmt-check install run-example clean
 
 BINARY := bin/mirror
 
@@ -7,6 +7,9 @@ build:
 
 test:
 	go test ./... -v
+
+test-acceptance:
+	go test ./acceptance/... -v
 
 vet:
 	go vet ./...
