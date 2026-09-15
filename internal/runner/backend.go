@@ -130,14 +130,14 @@ type Backend interface {
 }
 
 // ErrUnsupportedRunner is returned by SelectBackend for runner labels that
-// don't have a working backend yet (Windows/macOS are Phase 2/3 of the
-// design spec's roadmap).
+// don't have a working backend yet (Windows is Phase 2 of the design
+// spec's roadmap — macOS now has a real backend, see HostBackend).
 type ErrUnsupportedRunner struct {
 	RunsOn string
 }
 
 func (e *ErrUnsupportedRunner) Error() string {
-	return fmt.Sprintf("runner %q is not supported yet (only ubuntu-latest/ubuntu-22.04/ubuntu-24.04 run today — see docs/design/specs for the Phase 2/3 roadmap)", e.RunsOn)
+	return fmt.Sprintf("runner %q is not supported yet (only ubuntu-latest/ubuntu-22.04/ubuntu-24.04/macos-latest/macos-13/macos-14/macos-15 run today — see docs/design/specs for the Phase 2 roadmap)", e.RunsOn)
 }
 
 // SelectBackend maps a job's `runs-on` value to a concrete Backend.
