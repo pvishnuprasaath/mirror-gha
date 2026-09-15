@@ -35,13 +35,14 @@ type JobOutcome struct {
 // Context is the set of GitHub Actions contexts (github, env, runner,
 // steps, needs, matrix, vars) available to expressions while a job runs.
 type Context struct {
-	GitHub map[string]interface{}
-	Env    map[string]string
-	Runner map[string]interface{}
-	Steps  map[string]StepOutcome
-	Needs  map[string]JobOutcome
-	Matrix MatrixCombination
-	Vars   map[string]string
+	GitHub  map[string]interface{}
+	Env     map[string]string
+	Runner  map[string]interface{}
+	Steps   map[string]StepOutcome
+	Needs   map[string]JobOutcome
+	Matrix  MatrixCombination
+	Vars    map[string]string
+	Secrets map[string]string
 }
 
 // NewContext builds the initial Context for running job within workflow.
@@ -72,10 +73,11 @@ func NewContext(wf *Workflow, job *Job) *Context {
 			"os":   "Linux",
 			"temp": "/tmp",
 		},
-		Steps:  map[string]StepOutcome{},
-		Needs:  map[string]JobOutcome{},
-		Matrix: MatrixCombination{},
-		Vars:   map[string]string{},
+		Steps:   map[string]StepOutcome{},
+		Needs:   map[string]JobOutcome{},
+		Matrix:  MatrixCombination{},
+		Vars:    map[string]string{},
+		Secrets: map[string]string{},
 	}
 }
 
@@ -189,6 +191,11 @@ func (c *Context) resolvePath(path []string) (interface{}, error) {
 			return nil, fmt.Errorf("invalid vars reference: %s", strings.Join(path, "."))
 		}
 		return lookupStringCI(c.Vars, path[1]), nil
+	case "secrets":
+		if len(path) != 2 {
+			return nil, fmt.Errorf("invalid secrets reference: %s", strings.Join(path, "."))
+		}
+		return lookupStringCI(c.Secrets, path[1]), nil
 	case "inputs":
 		if len(path) != 2 {
 			return nil, fmt.Errorf("invalid inputs reference: %s", strings.Join(path, "."))

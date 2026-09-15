@@ -106,6 +106,9 @@ func RunJob(ctx context.Context, wf *Workflow, job *Job, backend runner.Backend,
 	for k, v := range opts.ExtraEnv {
 		actx.Env[k] = v
 	}
+	if token, ok := opts.ExtraEnv["GITHUB_TOKEN"]; ok {
+		actx.Secrets["GITHUB_TOKEN"] = token
+	}
 	result := &JobResult{Conclusion: "success"}
 
 	environmentSpec, err := job.Environment()

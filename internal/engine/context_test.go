@@ -95,6 +95,19 @@ func TestResolvePath_Inputs(t *testing.T) {
 	}
 }
 
+func TestResolvePath_Secrets(t *testing.T) {
+	ctx := NewContext(&Workflow{}, &Job{})
+	ctx.Secrets["GITHUB_TOKEN"] = "fake-token-value"
+
+	got, err := ctx.resolvePath([]string{"secrets", "GITHUB_TOKEN"})
+	if err != nil {
+		t.Fatalf("resolvePath(secrets.GITHUB_TOKEN) error = %v", err)
+	}
+	if got != "fake-token-value" {
+		t.Errorf("resolvePath(secrets.GITHUB_TOKEN) = %v, want %q", got, "fake-token-value")
+	}
+}
+
 func TestCallStatusFunc(t *testing.T) {
 	ctx := NewContext(&Workflow{}, &Job{})
 

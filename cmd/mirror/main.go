@@ -128,6 +128,19 @@ func fakeRuntimeToken() string {
 	return header + "." + payload + ".mirror-gha-local-signature"
 }
 
+// fakeGitHubToken is a plain, clearly-fake GITHUB_TOKEN placeholder — a
+// real GITHUB_TOKEN is an opaque string (not JWT-shaped, unlike
+// ACTIONS_RUNTIME_TOKEN above), so no particular shape is needed here.
+// Its purpose is just to exist: many real actions (actions/checkout,
+// actions/github-script, etc.) read process.env.GITHUB_TOKEN directly and
+// behave differently — sometimes erroring — if it's empty or missing.
+// mirror-gha performs no real GitHub API calls with it (permissions:
+// parsing is shim-only, matching this project's documented v1 scope),
+// so the value itself is never validated against anything.
+func fakeGitHubToken() string {
+	return "ghs_mirror_gha_local_placeholder_token"
+}
+
 func parseLocalRepositoryOverrides(values []string) (map[string]string, error) {
 	overrides := map[string]string{}
 	for _, v := range values {
@@ -238,7 +251,9 @@ func runCommand(path string, mode runMode) int {
 		}
 	}
 
-	extraEnv := map[string]string{}
+	extraEnv := map[string]string{
+		"GITHUB_TOKEN": fakeGitHubToken(),
+	}
 	if !mode.dryRun {
 		storeRoot, err := cacheserver.StoreRoot()
 		if err != nil {

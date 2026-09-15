@@ -75,6 +75,38 @@ type EnvironmentSpec struct {
 	URL  string `yaml:"url"`
 }
 
+// PermissionsSpec is a workflow's or job's `permissions:` field — either
+// a bare "read-all"/"write-all" string (All) or a mapping of scope name
+// to "read"/"write"/"none" (Scopes). mirror-gha parses and validates the
+// shape but doesn't enforce it: there's no real GitHub API surface being
+// called locally that permissions could actually restrict, matching this
+// project's documented "shim-enforced" v1 scope for this field.
+type PermissionsSpec struct {
+	All    string
+	Scopes map[string]string
+}
+
+func decodePermissions(node yaml.Node) (*PermissionsSpec, error) {
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.ScalarNode:
+		var all string
+		if err := node.Decode(&all); err != nil {
+			return nil, fmt.Errorf("permissions: %w", err)
+		}
+		return &PermissionsSpec{All: all}, nil
+	case yaml.MappingNode:
+		scopes := map[string]string{}
+		if err := node.Decode(&scopes); err != nil {
+			return nil, fmt.Errorf("permissions: %w", err)
+		}
+		return &PermissionsSpec{Scopes: scopes}, nil
+	default:
+		return nil, fmt.Errorf("permissions: must be a string or a mapping")
+	}
+}
+
 // RunDefaults is the `run:` block inside a `defaults:` section.
 type RunDefaults struct {
 	Shell            string `yaml:"shell"`
@@ -99,6 +131,13 @@ type Job struct {
 	RawContainer   yaml.Node                `yaml:"container"`
 	Services       map[string]ContainerSpec `yaml:"services"`
 	RawEnvironment yaml.Node                `yaml:"environment"`
+	RawPermissions yaml.Node                `yaml:"permissions"`
+}
+
+// Permissions resolves the job's `permissions:` field. Returns nil, nil
+// when the job has no permissions: field at all.
+func (j *Job) Permissions() (*PermissionsSpec, error) {
+	return decodePermissions(j.RawPermissions)
 }
 
 // Environment resolves the job's `environment:` field, which GitHub
@@ -151,11 +190,18 @@ func (j *Job) Container() (*ContainerSpec, error) {
 }
 
 type Workflow struct {
-	Name     string            `yaml:"name"`
-	On       interface{}       `yaml:"on"`
-	Env      map[string]string `yaml:"env"`
-	Defaults *Defaults         `yaml:"defaults"`
-	Jobs     map[string]Job    `yaml:"jobs"`
+	Name           string            `yaml:"name"`
+	On             interface{}       `yaml:"on"`
+	Env            map[string]string `yaml:"env"`
+	Defaults       *Defaults         `yaml:"defaults"`
+	Jobs           map[string]Job    `yaml:"jobs"`
+	RawPermissions yaml.Node         `yaml:"permissions"`
+}
+
+// Permissions resolves the workflow's top-level `permissions:` field.
+// Returns nil, nil when the workflow has no permissions: field at all.
+func (wf *Workflow) Permissions() (*PermissionsSpec, error) {
+	return decodePermissions(wf.RawPermissions)
 }
 
 // Parse parses raw GitHub Actions workflow YAML into a Workflow.

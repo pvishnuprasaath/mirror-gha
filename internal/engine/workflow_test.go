@@ -293,6 +293,93 @@ jobs:
 	}
 }
 
+func TestJob_Permissions_Absent(t *testing.T) {
+	job := &Job{}
+	spec, err := job.Permissions()
+	if err != nil {
+		t.Fatalf("Permissions() error = %v", err)
+	}
+	if spec != nil {
+		t.Errorf("Permissions() = %v, want nil for a job with no permissions: field", spec)
+	}
+}
+
+func TestJob_Permissions_BareString(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions: read-all
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Permissions()
+	if err != nil {
+		t.Fatalf("Permissions() error = %v", err)
+	}
+	if spec == nil || spec.All != "read-all" {
+		t.Fatalf("Permissions() = %+v, want All=read-all", spec)
+	}
+}
+
+func TestJob_Permissions_Mapping(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	job := wf.Jobs["build"]
+	spec, err := job.Permissions()
+	if err != nil {
+		t.Fatalf("Permissions() error = %v", err)
+	}
+	if spec == nil || spec.Scopes["contents"] != "read" || spec.Scopes["issues"] != "write" {
+		t.Fatalf("Permissions() = %+v, want Scopes={contents:read, issues:write}", spec)
+	}
+}
+
+func TestWorkflow_Permissions_BareString(t *testing.T) {
+	yaml := []byte(`
+name: sample
+on: workflow_dispatch
+permissions: write-all
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+	wf, err := Parse(yaml)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	spec, err := wf.Permissions()
+	if err != nil {
+		t.Fatalf("Permissions() error = %v", err)
+	}
+	if spec == nil || spec.All != "write-all" {
+		t.Fatalf("Permissions() = %+v, want All=write-all", spec)
+	}
+}
+
 func TestParse_NoJobs(t *testing.T) {
 	yaml := []byte(`
 name: empty
