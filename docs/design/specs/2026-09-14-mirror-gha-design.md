@@ -944,6 +944,140 @@ macOS execution requires an actual Mac host) — a `runs-on: macos-latest`
 workflow running a plain `run:` step and a real JS action, proving Node
 actually executes natively with no Docker involved anywhere in the path.
 
+## Matrix Concurrency and `concurrency:` Groups
+
+**Scope:** real, bounded concurrent execution of a job's matrix
+combinations (`strategy.max-parallel`), plus `concurrency:` group
+serialization/`cancel-in-progress` scoped to the one new race surface
+this introduces — combinations of the *same* job whose resolved group
+name happens to coincide. Checked against act's actual source
+(`nektos/act`, `pkg/runner/runner.go`'s `NewPlanExecutor`,
+`pkg/common/executor.go`'s `NewParallelExecutor`) per the standing
+direction to treat it as the reference implementation — with two
+corrections found and deliberately not carried over, detailed below.
+
+**Scope correction from the original ask, made explicit:** `max-parallel`
+only ever governs matrix combinations of one job — real GitHub Actions
+has no equivalent knob for independent jobs, which run in parallel there
+only bounded by runner availability, a concept that doesn't exist
+locally. Independent jobs in mirror-gha stay exactly as sequential as
+they are today; this is not a gap relative to real GitHub Actions, it's
+matching it. Only matrix-combination concurrency is new here.
+
+**Default cap when `max-parallel` is unset: 4, not unbounded — adopted
+directly from act's own considered choice** (`pkg/runner/runner.go`,
+paired with a rationale comment in `pkg/model/workflow.go`'s
+`Strategy.GetMaxParallel`), not invented independently. Real GitHub
+Actions' own default is effectively unbounded (limited only by
+cloud-runner availability) — but mirror-gha's job containers all compete
+for one local Docker daemon's real CPU/memory/network, the same resource
+constraint act's own default was chosen to respect. `len(combinations)`
+caps this further when smaller than 4 (or than an explicit
+`max-parallel` value), so a 2-combination matrix never spins up more than
+2 concurrent containers regardless of the configured limit.
+
+**Two things intentionally NOT carried over from act, because they'd be
+bugs, not fidelity:**
+1. **act has a genuine unguarded data race** on matrix combinations of
+   the same job — every combination shares one `*model.Job` pointer and
+   concurrently mutates its `.Result`/`.Outputs` map with zero mutex
+   (`pkg/runner/run_context.go`'s `result()`/`interpolateOutputs()`).
+   mirror-gha's design instead has each combination's goroutine compute
+   its own fully independent local result (steps, outputs, conclusion);
+   these are merged into the job's shared `WorkflowResult` only after
+   `sync.WaitGroup.Wait()` returns, under a mutex, by combination index —
+   never a concurrent write to shared state during execution.
+2. **`WorkflowResult`'s existing doc comment already documents a known
+   GitHub Actions gotcha**: a matrixed job's `Outputs` reflect "the last
+   combination to finish," reproduced deliberately as a fixed,
+   deterministic choice (whichever combination is *last by index*) before
+   this sub-project, since execution was strictly sequential. Under real
+   concurrency, "last to finish" becomes a genuine wall-clock race between
+   goroutines — mirror-gha switches to tracking this via whichever
+   combination's completion the shared mutex-protected write actually
+   lands last, which is *more* faithful to real GitHub Actions' own
+   documented nondeterminism here than the previous deterministic
+   approximation was, not a regression.
+
+**Concurrency primitive: a semaphore channel + `sync.WaitGroup`, not a
+new abstraction.** Every combination's goroutine launches immediately;
+each acquires a `chan struct{}` semaphore sized to the effective
+max-parallel before actually calling `RunJob`, and releases it on
+completion — the standard Go bounded-worker-pool idiom, functionally
+equivalent to act's own hand-rolled `NewParallelExecutor` (also
+goroutines + channels, no external dependency) without introducing a
+new named executor abstraction this project doesn't otherwise use.
+
+**Fail-fast under concurrency: stops starting new combinations, doesn't
+cancel in-flight ones — an extension of the existing pre-concurrency
+semantic, not a new one.** A shared, mutex-guarded `stopStartingNew`
+bool is checked by each goroutine immediately before it would start
+running (after acquiring its semaphore slot); if already set, that
+combination is recorded as `skipped` instead of run. Combinations already
+past that check when a sibling combination's failure sets the flag run to
+completion uninterrupted — matches mirror-gha's own existing (pre-this-
+sub-project) fail-fast behavior of skipping not-yet-started work rather
+than aborting running work, now extended from "the next step" to "the
+next not-yet-started combination," not a new, more aggressive semantic
+GitHub Actions' own active-cancellation behavior would imply. A 3-
+combination matrix that previously always demonstrated "skip after
+failure" under strictly sequential execution now only demonstrates it
+when there are more combinations than the effective max-parallel (a
+second wave to actually skip) — this is a real, deliberate behavior
+change existing tests need to account for, not an oversight.
+
+**`concurrency:` — a real gap in act (not implemented there at all,
+confirmed via source and a repo-wide grep with zero hits), so this is
+mirror-gha's own design, not ported from anywhere.** `Job.Concurrency()`
+(dual-shape, matching every other `container:`/`environment:`-style
+field: a bare group-name string, or `{group, cancel-in-progress}`) is
+resolved **per matrix combination**, since the group string can reference
+`${{ matrix.* }}` — evaluated via the same `SubstituteExpressions` every
+`with:` value already uses, against that combination's own `Context`
+(with `Matrix` set), before that combination's goroutine attempts to
+acquire its group. Two combinations of the same job whose evaluated
+group strings differ (the common case — e.g. `concurrency:
+deploy-${{ matrix.env }}`) never contend with each other at all; only a
+static group string (or two different matrix values that happen to
+interpolate to the same string) creates real contention. Workflow-level
+`concurrency:` is parsed (so it never errors) but is an explicit,
+documented no-op: it exists in real GitHub Actions to serialize/cancel
+*separate workflow runs* sharing a group, a concept with no meaning in a
+tool that only ever executes one workflow run per invocation — this
+matches this field's pre-existing "inherently satisfied, no-op" framing
+from before this sub-project, still true for the workflow-level case even
+though the job-level case now has real teeth.
+
+**Scheduler mechanics — a small, self-contained type, not folded into
+`workflow_run.go`'s own control flow.** `cancel-in-progress: false`
+(the default) acquires a per-group `chan struct{}` sized 1, acting as a
+mutex — a second combination in the same group blocks until the first
+releases it (a real queue, not a skip). `cancel-in-progress: true`
+instead cancels the group's currently-running combination's own
+`context.Context` (layered on top of that combination's existing
+per-job `TimeoutMinutes` context, unchanged) before starting the new one
+— using a per-group monotonically increasing generation counter to avoid
+a delayed release from an already-superseded combination incorrectly
+clearing a newer one's state, a real correctness hazard a naive
+"store one cancel func per group" implementation would hit under
+genuine concurrency.
+
+**Testing:** unit tests for `Job.Concurrency()`/`Workflow.Concurrency()`
+parsing (both shapes), the scheduler's blocking-queue and
+cancel-in-progress behavior in isolation (provable deterministically via
+controlled goroutine ordering, not wall-clock timing), and a real
+timing-based proof that concurrent matrix execution is genuinely faster
+than sequential (N combinations of a fixed-duration fake step complete in
+meaningfully less than N × that duration when `max-parallel` allows it) —
+timing-based tests are inherently a little less precise than logic-based
+ones, so this uses a generous margin rather than a tight bound. The
+existing `TestRunWorkflow_MatrixFailFastStopsRemainingCombinations` test
+needs its matrix strategy given an explicit `MaxParallel: 1` to keep
+testing what it was actually written to test (sequential fail-fast skip
+behavior) now that the *default* behavior for its 3-combination matrix
+would otherwise run all three concurrently in one wave — a real behavior
+change this sub-project causes, not a test bug being fixed incidentally.
+
 ## Data flow
 
 ```
